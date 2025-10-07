@@ -140,55 +140,60 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
               >
                 Search entire document
               </Button>
-
+              <Button
+                type="button"
+                variant={!filters.page_range?.use_entire_document ? "default" : "outline"}
+                size="sm"
+                onClick={() => setFilters(prev => ({
+                  ...prev,
+                  page_range: {
+                    ...prev.page_range,
+                    use_entire_document: false
+                  }
+                }))}
+              >
+                Search specific page range
+              </Button>
             </div>
 
             {!filters.page_range?.use_entire_document && (
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  onClick={() => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      use_entire_document: false
-                    }
-                  }))}
-                >
-                  Search specific page range
-                </Button>
-                <Input
-                  id="startPage"
-                  type="number"
-                  min="1"
-                  placeholder="From page"
-                  className="h-8 w-24"
-                  value={filters.page_range?.start_page || ''}
-                  onChange={(e) => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      start_page: e.target.value ? parseInt(e.target.value) : 1
-                    }
-                  }))}
-                />
-                <Input
-                  id="endPage"
-                  type="number"
-                  min="1"
-                  placeholder="To page"
-                  className="h-8 w-24"
-                  value={filters.page_range?.end_page || ''}
-                  onChange={(e) => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      end_page: e.target.value ? parseInt(e.target.value) : 1
-                    }
-                  }))}
-                />
+              <div className="grid grid-cols-2 gap-3 pl-4">
+                <div>
+                  <Label htmlFor="startPage" className="text-xs">From page</Label>
+                  <Input
+                    id="startPage"
+                    type="number"
+                    min="1"
+                    placeholder="1"
+                    className="h-8"
+                    value={filters.page_range?.start_page || ''}
+                    onChange={(e) => setFilters(prev => ({
+                      ...prev,
+                      page_range: {
+                        ...prev.page_range,
+                        start_page: e.target.value ? parseInt(e.target.value) : 1
+                      }
+                    }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="endPage" className="text-xs">To page</Label>
+                  <Input
+                    id="endPage"
+                    type="number"
+                    min="1"
+                    placeholder="10"
+                    className="h-8"
+                    value={filters.page_range?.end_page || ''}
+                    onChange={(e) => setFilters(prev => ({
+                      ...prev,
+                      page_range: {
+                        ...prev.page_range,
+                        end_page: e.target.value ? parseInt(e.target.value) : 1
+                      }
+                    }))}
+                  />
+                </div>
               </div>
             )}
           </div>
