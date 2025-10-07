@@ -57,7 +57,7 @@ jobs:
       - name: Validate configuration
         run: |
           echo "Validating project configuration..."
-          npm run lint -- --max-warnings 0
+          npm run lint
           npx tsc --noEmit
 
       - name: Set test configuration
