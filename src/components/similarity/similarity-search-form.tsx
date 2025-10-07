@@ -162,7 +162,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   id="startPage"
                   type="number"
                   min="1"
-                  placeholder="From page"
+                  placeholder="From"
                   className="h-8 w-24"
                   value={filters.page_range?.start_page || ''}
                   onChange={(e) => setFilters(prev => ({
@@ -177,7 +177,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   id="endPage"
                   type="number"
                   min="1"
-                  placeholder="To page"
+                  placeholder="To"
                   className="h-8 w-24"
                   value={filters.page_range?.end_page || ''}
                   onChange={(e) => setFilters(prev => ({
