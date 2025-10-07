@@ -125,7 +125,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
           {/* Page Range Selection */}
           <div className="space-y-2">
             <Label className="text-sm font-medium">Search Scope</Label>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               <Button
                 type="button"
                 variant={filters.page_range?.use_entire_document ? "default" : "outline"}
@@ -154,42 +154,41 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
               >
                 Search specific page range
               </Button>
+              {!filters.page_range?.use_entire_document && (
+                <>
+                  <Input
+                    id="startPage"
+                    type="number"
+                    min="1"
+                    placeholder="From"
+                    className="h-8 w-24"
+                    value={filters.page_range?.start_page || ''}
+                    onChange={(e) => setFilters(prev => ({
+                      ...prev,
+                      page_range: {
+                        ...prev.page_range,
+                        start_page: e.target.value ? parseInt(e.target.value) : 1
+                      }
+                    }))}
+                  />
+                  <Input
+                    id="endPage"
+                    type="number"
+                    min="1"
+                    placeholder="To"
+                    className="h-8 w-24"
+                    value={filters.page_range?.end_page || ''}
+                    onChange={(e) => setFilters(prev => ({
+                      ...prev,
+                      page_range: {
+                        ...prev.page_range,
+                        end_page: e.target.value ? parseInt(e.target.value) : 1
+                      }
+                    }))}
+                  />
+                </>
+              )}
             </div>
-
-            {!filters.page_range?.use_entire_document && (
-              <div className="flex items-center gap-2 pl-4">
-                <Input
-                  id="startPage"
-                  type="number"
-                  min="1"
-                  placeholder="From"
-                  className="h-8 w-24"
-                  value={filters.page_range?.start_page || ''}
-                  onChange={(e) => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      start_page: e.target.value ? parseInt(e.target.value) : 1
-                    }
-                  }))}
-                />
-                <Input
-                  id="endPage"
-                  type="number"
-                  min="1"
-                  placeholder="To"
-                  className="h-8 w-24"
-                  value={filters.page_range?.end_page || ''}
-                  onChange={(e) => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      end_page: e.target.value ? parseInt(e.target.value) : 1
-                    }
-                  }))}
-                />
-              </div>
-            )}
           </div>
 
           {/* Business Metadata Filters */}
