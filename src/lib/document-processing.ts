@@ -1394,15 +1394,54 @@ async function generateEmbeddingsFromPages(
   const batchSize = Math.min(maxConcurrentChunks, processingConfig.batchSize)
 
   for (let i = 0; i < pagedChunks.length; i += batchSize) {
-    const batch = pagedChunks.slice(i, i + batchSize)
+    const batch = pagedChunks.slice(i, i + batchSize);
     logger.debug('Processing chunk batch', {
       batchNumber: Math.floor(i / batchSize) + 1,
       totalBatches: Math.ceil(pagedChunks.length / batchSize),
       batchSize: batch.length,
       component: 'document-processing'
-    })
+    });
 
-    await Promise.all(batch.map(pagedChunk => processChunkWithRetry(documentId, pagedChunk, businessMetadata, filename)))
+    let attempts = 0;
+    let failedChunks = batch;
+    const MAX_CHUNK_RETRIES = 3; // Retries for individual chunks within a batch
+
+    while (failedChunks.length > 0 && attempts < MAX_CHUNK_RETRIES) {
+      if (attempts > 0) {
+        const delay = Math.pow(2, attempts) * 1000; // Exponential backoff
+        logger.warn(`Retrying ${failedChunks.length} failed chunks in batch`, { attempt: attempts, documentId });
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      const results = await Promise.allSettled(
+        failedChunks.map(pagedChunk => processChunkWithRetry(documentId, pagedChunk, businessMetadata, filename))
+      );
+
+      const newFailedChunks = [];
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const failedChunk = failedChunks[index];
+          newFailedChunks.push(failedChunk);
+          logger.warn('Chunk processing failed, will retry.', {
+            chunkIndex: failedChunk.chunkIndex,
+            error: result.reason?.message,
+            documentId,
+            attempt: attempts + 1
+          });
+        }
+      });
+
+      failedChunks = newFailedChunks;
+      attempts++;
+    }
+
+    if (failedChunks.length > 0) {
+      logger.error(`Failed to process ${failedChunks.length} chunks after ${MAX_CHUNK_RETRIES} attempts. Aborting document processing.`, { 
+        documentId,
+        failedChunkIndexes: failedChunks.map(c => c.chunkIndex)
+      });
+      throw new Error(`Failed to process ${failedChunks.length} chunks after multiple retries.`);
+    }
 
     if (i + batchSize < pagedChunks.length) {
       await new Promise(resolve => setTimeout(resolve, processingConfig.delayBetweenBatches))
