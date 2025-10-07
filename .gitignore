@@ -87,3 +87,6 @@ logs
 # Temporary files
 tmp/
 temp/
+
+playwright-report/
+test-results/
