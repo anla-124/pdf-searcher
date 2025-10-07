@@ -7,7 +7,7 @@ A production-ready web application for processing PDF subscription documents wit
 - **Secure Authentication**: User authentication with Supabase Auth
 - **PDF Upload & Storage**: Upload up to 10 PDFs at once (max 50MB each)
 - **AI Document Processing**: Extract text and structured fields using Google Document AI
-- **Similarity Search**: Find similar documents using Google Vertex AI embeddings and Pinecone vector search
+- **Similarity Search**: Search similar documents using Google Vertex AI embeddings and Pinecone vector search
 - **Advanced Filtering**: Filter search results by metadata, date range, and content type
 - **Real-time Processing**: Track document processing progress in real-time
 - **Responsive UI**: Modern, responsive interface built with Next.js and Tailwind CSS
@@ -134,7 +134,7 @@ npm run dev
 - Embeddings are generated and indexed in Pinecone
 
 ### 4. Similarity Search
-- Click "Find Similar Documents" on any completed document
+- Click "Search Similar Documents" on any completed document
 - Use filters to refine search results:
   - Investor type
   - Document type
@@ -151,7 +151,7 @@ npm run dev
 - `GET /api/documents/[id]` - Get document details
 - `DELETE /api/documents/[id]` - Delete document
 - `GET /api/documents/[id]/status` - Check processing status
-- `POST /api/documents/[id]/similar` - Find similar documents
+- `POST /api/documents/[id]/similar` - Search similar documents
 
 ## Deployment
 

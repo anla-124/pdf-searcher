@@ -16,9 +16,10 @@ import {
   TrendingUp,
   AlertTriangle,
   Eye,
-  ArrowUpDown
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { formatUploadDate } from '@/lib/date-utils'
 
 interface SimilarityResultsProps {
   results: SimilaritySearchResult[]
@@ -27,7 +28,8 @@ interface SimilarityResultsProps {
 }
 
 export function SimilarityResults({ results, sourceDocument, isLoading }: SimilarityResultsProps) {
-  const [sortBy, setSortBy] = useState<'similarity-desc' | 'similarity-asc' | 'title' | 'date' | 'filesize'>('similarity-desc')
+  const [sortBy, setSortBy] = useState<string>('similarity')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -44,30 +46,34 @@ export function SimilarityResults({ results, sourceDocument, isLoading }: Simila
 
   const sortResults = (results: SimilaritySearchResult[]) => {
     const sorted = [...results].sort((a, b) => {
+      let comparison = 0
+      
       switch (sortBy) {
-        case 'similarity-desc':
-          return b.score - a.score
-        case 'similarity-asc':
-          return a.score - b.score
-        case 'title':
-          return a.document.title.localeCompare(b.document.title)
-        case 'date':
-          return new Date(b.document.created_at).getTime() - new Date(a.document.created_at).getTime()
-        case 'filesize':
-          return b.document.file_size - a.document.file_size
+        case 'similarity':
+          comparison = a.score - b.score
+          break
+        case 'upload_time':
+          comparison = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
+          break
+        case 'name':
+          comparison = a.document.title.localeCompare(b.document.title)
+          break
+        case 'size':
+          comparison = a.document.file_size - b.document.file_size
+          break
         default:
-          return b.score - a.score
+          comparison = a.score - b.score
       }
+      
+      return sortOrder === 'asc' ? comparison : -comparison
     })
     return sorted
   }
 
-  const getScoreColor = (score: number) => {
-    if (score >= 0.9) return 'text-green-600 dark:text-green-400'
-    if (score >= 0.8) return 'text-blue-600 dark:text-blue-400'
-    if (score >= 0.7) return 'text-orange-600 dark:text-orange-400'
-    return 'text-red-600 dark:text-red-400'
+  const toggleSortOrder = () => {
+    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
   }
+
 
   const getScoreBadgeColor = (score: number) => {
     if (score >= 0.9) return 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300'
@@ -151,19 +157,30 @@ export function SimilarityResults({ results, sourceDocument, isLoading }: Simila
           </div>
           {results.length > 1 && (
             <div className="flex items-center gap-2">
-              <ArrowUpDown className="h-4 w-4 text-gray-400" />
-              <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
-                <SelectTrigger className="w-48">
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger className="w-40">
                   <SelectValue placeholder="Sort by..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="similarity-desc">Highest Similarity</SelectItem>
-                  <SelectItem value="similarity-asc">Lowest Similarity</SelectItem>
-                  <SelectItem value="title">Document Name</SelectItem>
-                  <SelectItem value="date">Most Recent</SelectItem>
-                  <SelectItem value="filesize">File Size</SelectItem>
+                  <SelectItem value="similarity">Similarity</SelectItem>
+                  <SelectItem value="upload_time">Upload Time</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="size">Size</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleSortOrder}
+                className="px-3"
+                aria-label={`Sort ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
+              >
+                {sortOrder === 'asc' ? (
+                  <ArrowUp className="h-4 w-4" />
+                ) : (
+                  <ArrowDown className="h-4 w-4" />
+                )}
+              </Button>
             </div>
           )}
         </div>
@@ -177,12 +194,12 @@ export function SimilarityResults({ results, sourceDocument, isLoading }: Simila
             </h3>
             <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto">
               Try adjusting your search parameters, lowering the minimum similarity threshold, 
-              or removing filters to find more results.
+              or removing filters to search more results.
             </p>
           </div>
         ) : (
           <div className="space-y-6">
-            {sortResults(results).map((result, index) => (
+            {sortResults(results).map((result, _index) => (
               <Card key={result.document.id} className="border-l-4 border-l-blue-500">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
@@ -247,7 +264,7 @@ export function SimilarityResults({ results, sourceDocument, isLoading }: Simila
                     <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {formatDistanceToNow(new Date(result.document.created_at), { addSuffix: true })}
+                        {formatUploadDate(result.document.created_at)}
                       </span>
                       <span>{formatFileSize(result.document.file_size)}</span>
                       {formatPageCount(result.document.page_count) && (
@@ -303,40 +320,6 @@ export function SimilarityResults({ results, sourceDocument, isLoading }: Simila
                     )}
                   </div>
 
-                  {/* Matching chunks */}
-                  {result.matching_chunks && result.matching_chunks.length > 0 && (
-                    <div>
-                      <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-blue-500" />
-                        Similar Content ({result.matching_chunks.length} matches)
-                      </h4>
-                      <div className="space-y-2">
-                        {result.matching_chunks.slice(0, 2).map((chunk, chunkIndex) => (
-                          <div 
-                            key={chunkIndex}
-                            className="p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg border-l-2 border-blue-200 dark:border-blue-800"
-                          >
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                                Match {chunkIndex + 1}
-                              </span>
-                              <Badge variant="outline" className="text-xs">
-                                {Math.round(chunk.score * 100)}% similar
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
-                              {chunk.text}
-                            </p>
-                          </div>
-                        ))}
-                        {result.matching_chunks.length > 2 && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400 pl-3">
-                            + {result.matching_chunks.length - 2} more matching sections
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             ))}

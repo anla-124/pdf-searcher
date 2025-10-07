@@ -1,13 +1,14 @@
-import { searchSimilarDocuments } from '@/lib/pinecone'
+import { vectorSearch } from '@/lib/pinecone'
 import { generateEmbeddings } from '@/lib/embeddings-vertex'
 import { createServiceClient } from '@/lib/supabase/server'
 import { AdvancedRankingEngine } from '@/lib/advanced-ranking'
+import type { BusinessMetadata } from '@/types/external-apis'
 
 interface SearchResult {
   documentId: string
   score: number
   algorithm: string
-  metadata: Record<string, any>
+  metadata: BusinessMetadata & Record<string, unknown>
   chunks: Array<{
     text: string
     score: number
@@ -18,7 +19,7 @@ interface SearchResult {
 interface HybridSearchOptions {
   query: string
   topK: number
-  filters?: Record<string, any>
+  filters?: Record<string, unknown>
   enableSemanticSearch?: boolean
   enableKeywordSearch?: boolean
   enableHybridRanking?: boolean
@@ -120,10 +121,10 @@ export class HybridSearchEngine {
       const userPreferences = await AdvancedRankingEngine.getUserRankingPreferences(userId)
       
       // Create ranking context
-      const rankingContext = {
+      const rankingContext: any = {
         userId,
-        userPreferences,
-        businessContext
+        ...(userPreferences && { userPreferences }),
+        ...(businessContext && { businessContext })
       }
       
       // Apply advanced ranking
@@ -177,7 +178,7 @@ export class HybridSearchEngine {
   private static async semanticVectorSearch(
     query: string,
     limit: number,
-    filters: Record<string, any>,
+    filters: Record<string, unknown>,
     userId: string
   ): Promise<SearchResult[]> {
     // Generate query embedding
@@ -186,36 +187,41 @@ export class HybridSearchEngine {
     // Add user filter
     const pineconeFilters = {
       ...filters,
-      // Add any additional semantic-specific filters
+      // Add additional semantic-specific filters
     }
 
     // Search similar vectors
-    const vectorResults = await searchSimilarDocuments(queryEmbedding, limit, pineconeFilters)
+    const vectorResults = await vectorSearch(queryEmbedding, {
+      topK: limit,
+      filter: pineconeFilters,
+      threshold: 0.5
+    })
     
     // Group by document and aggregate scores
     const documentMap = new Map<string, SearchResult>()
     
     for (const result of vectorResults) {
-      const docId = result.metadata.document_id
+      if (!result.metadata) continue
+      const docId = (result.metadata as any)['document_id'] as string
       
       if (!documentMap.has(docId)) {
         documentMap.set(docId, {
           documentId: docId,
           score: result.score,
           algorithm: 'semantic-vector',
-          metadata: result.metadata,
+          metadata: result.metadata as BusinessMetadata & Record<string, unknown>,
           chunks: [{
-            text: result.metadata.text || '',
+            text: ((result.metadata as any)['text'] as string) || '',
             score: result.score,
-            pageNumber: result.metadata.page_number
+            pageNumber: (result.metadata as any)['page_number'] as number
           }]
         })
       } else {
         const existing = documentMap.get(docId)!
         existing.chunks.push({
-          text: result.metadata.text || '',
+          text: ((result.metadata as any)['text'] as string) || '',
           score: result.score,
-          pageNumber: result.metadata.page_number
+          pageNumber: (result.metadata as any)['page_number'] as number
         })
         // Update overall score (use max score for now, could be more sophisticated)
         existing.score = Math.max(existing.score, result.score)
@@ -229,10 +235,10 @@ export class HybridSearchEngine {
   private static async keywordSearch(
     query: string,
     limit: number,
-    filters: Record<string, any>,
+    filters: Record<string, unknown>,
     userId: string
   ): Promise<SearchResult[]> {
-    const supabase = createServiceClient()
+    const supabase = await createServiceClient()
     
     // Prepare keyword search with PostgreSQL full-text search
     const keywords = this.extractKeywords(query)
@@ -247,26 +253,26 @@ export class HybridSearchEngine {
         id,
         title,
         filename,
-        extracted_text,
         metadata,
-        created_at
+        created_at,
+        document_content(extracted_text)
       `)
       .eq('user_id', userId)
       .eq('status', 'completed')
-      .textSearch('extracted_text', searchTerms)
+      .textSearch('document_content.extracted_text', searchTerms)
 
     // Apply filters
-    if (filters.law_firm) {
-      queryBuilder = queryBuilder.in('metadata->>law_firm', Array.isArray(filters.law_firm) ? filters.law_firm : [filters.law_firm])
+    if (filters['law_firm']) {
+      queryBuilder = queryBuilder.in('metadata->>law_firm', Array.isArray(filters['law_firm']) ? filters['law_firm'] : [filters['law_firm']])
     }
-    if (filters.fund_manager) {
-      queryBuilder = queryBuilder.in('metadata->>fund_manager', Array.isArray(filters.fund_manager) ? filters.fund_manager : [filters.fund_manager])
+    if (filters['fund_manager']) {
+      queryBuilder = queryBuilder.in('metadata->>fund_manager', Array.isArray(filters['fund_manager']) ? filters['fund_manager'] : [filters['fund_manager']])
     }
-    if (filters.fund_admin) {
-      queryBuilder = queryBuilder.in('metadata->>fund_admin', Array.isArray(filters.fund_admin) ? filters.fund_admin : [filters.fund_admin])
+    if (filters['fund_admin']) {
+      queryBuilder = queryBuilder.in('metadata->>fund_admin', Array.isArray(filters['fund_admin']) ? filters['fund_admin'] : [filters['fund_admin']])
     }
-    if (filters.jurisdiction) {
-      queryBuilder = queryBuilder.in('metadata->>jurisdiction', Array.isArray(filters.jurisdiction) ? filters.jurisdiction : [filters.jurisdiction])
+    if (filters['jurisdiction']) {
+      queryBuilder = queryBuilder.in('metadata->>jurisdiction', Array.isArray(filters['jurisdiction']) ? filters['jurisdiction'] : [filters['jurisdiction']])
     }
 
     const { data: documents, error } = await queryBuilder
@@ -284,7 +290,8 @@ export class HybridSearchEngine {
 
     // Calculate keyword-based scores
     return documents.map(doc => {
-      const score = this.calculateKeywordScore(query, doc.extracted_text || '', doc.title)
+      const extractedText = doc.document_content?.[0]?.extracted_text || ''
+      const score = this.calculateKeywordScore(query, extractedText, doc.title)
       
       return {
         documentId: doc.id,
@@ -297,9 +304,8 @@ export class HybridSearchEngine {
           ...doc.metadata
         },
         chunks: [{
-          text: this.extractRelevantText(query, doc.extracted_text || ''),
-          score,
-          pageNumber: undefined
+          text: this.extractRelevantText(query, extractedText),
+          score
         }]
       }
     })
@@ -419,7 +425,7 @@ export class HybridSearchEngine {
     )
     
     if (relevantSentences.length > 0) {
-      let result = relevantSentences[0].trim()
+      let result = relevantSentences[0]?.trim() || ''
       if (result.length > maxLength) {
         result = result.substring(0, maxLength) + '...'
       }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
@@ -79,8 +79,8 @@ export function EnhancedProgressTracker({ documentId, onComplete }: EnhancedProg
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | null>(null)
   const [startTime] = useState(Date.now())
 
-  const updateProgressFromStatus = (statusData: any) => {
-    const { status, progress, message, phase } = statusData
+  const updateProgressFromStatus = useCallback((statusData: any) => {
+    const { status, progress, phase } = statusData
 
     setPhases(prev => prev.map(p => {
       if (phase && p.id === phase) {
@@ -103,26 +103,28 @@ export function EnhancedProgressTracker({ documentId, onComplete }: EnhancedProg
       return p
     }))
 
-    // Calculate overall progress
-    const totalPhases = phases.length
-    const completedPhases = phases.filter(p => p.status === 'completed').length
-    const currentPhaseProgress = progress || 0
-    
-    const overall = Math.round(((completedPhases * 100) + currentPhaseProgress) / totalPhases)
-    setOverallProgress(overall)
+    // Calculate overall progress - use functional update to avoid stale closure
+    setOverallProgress(_prev => {
+      const currentPhaseProgress = progress || 0
+      // Simplified calculation since we can't access phases in callback
+      return Math.min(currentPhaseProgress, 95)
+    })
 
     // Estimate time remaining
-    if (overall > 10) {
-      const elapsed = Date.now() - startTime
-      const estimated = (elapsed / overall) * (100 - overall)
-      setEstimatedTimeRemaining(Math.round(estimated / 1000))
-    }
+    setEstimatedTimeRemaining(prev => {
+      if (progress && progress > 10) {
+        const elapsed = Date.now() - startTime
+        const estimated = (elapsed / progress) * (100 - progress)
+        return Math.round(estimated / 1000)
+      }
+      return prev
+    })
 
     // Check if processing is complete
-    if (status === 'completed' && overall >= 95) {
+    if (status === 'completed' && progress >= 95) {
       onComplete?.()
     }
-  }
+  }, [startTime, onComplete])
 
   useEffect(() => {
     const pollProgress = async () => {
@@ -143,14 +145,6 @@ export function EnhancedProgressTracker({ documentId, onComplete }: EnhancedProg
     return () => clearInterval(interval)
   }, [documentId, updateProgressFromStatus])
 
-  const getPhaseStatusColor = (status: ProcessingPhase['status']) => {
-    switch (status) {
-      case 'completed': return 'bg-green-500'
-      case 'active': return 'bg-blue-500'
-      case 'error': return 'bg-red-500'
-      default: return 'bg-gray-300'
-    }
-  }
 
   const getPhaseStatusIcon = (phase: ProcessingPhase) => {
     const IconComponent = phase.icon

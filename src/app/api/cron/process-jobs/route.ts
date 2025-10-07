@@ -1,94 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { processDocument } from '@/lib/document-processing'
 import { batchProcessor } from '@/lib/document-ai-batch'
+import { logger, withRequestContext, generateCorrelationId } from '@/lib/logger'
 
 // Always try sync processing first - no estimation needed
 function needsBatchProcessing(fileSize: number, filename: string): boolean {
   // Always try sync first - let Document AI tell us if it's too large
-  const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(1)
-  console.log(`Document ${filename}: ${fileSize} bytes (${fileSizeMB}MB) - trying sync processing first`)
+  const fileSizeMB = parseFloat((fileSize / (1024 * 1024)).toFixed(1))
+  logger.info('Evaluating processing strategy', { 
+    filename,
+    fileSize,
+    fileSizeMB,
+    strategy: 'sync-first',
+    component: 'batch-processing'
+  })
   
   return false // Always start with sync
 }
 
-export async function GET(request: NextRequest) {
+// Extract job processing logic into a separate function
+async function processJob(supabase: any, job: any) {
+  logger.info('Processing job', { 
+    jobId: job.id, 
+    documentId: job.document_id, 
+    status: job.status,
+    component: 'cron-job'
+  })
+
   try {
-    // Verify this is called by Vercel Cron
-    const authHeader = request.headers.get('authorization')
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    // Create service role client to bypass RLS
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
-    )
-
-    // Get the next queued job (FIFO order, with priority support)
-    console.log('🔍 Checking for queued jobs...')
-    const { data: jobs, error: jobsError } = await supabase
-      .from('document_jobs')
-      .select(`
-        id,
-        document_id,
-        user_id,
-        status,
-        attempts,
-        max_attempts,
-        batch_operation_id,
-        processing_method,
-        metadata,
-        documents (
-          id,
-          title,
-          filename,
-          file_path,
-          file_size,
-          user_id
-        )
-      `)
-      .in('status', ['queued', 'processing'])
-      .order('priority', { ascending: false })
-      .order('created_at', { ascending: true })
-      .limit(1)
-
-    if (jobsError) {
-      console.error('Error fetching jobs:', jobsError)
-      return NextResponse.json({ error: 'Failed to fetch jobs' }, { status: 500 })
-    }
-
-    if (!jobs || jobs.length === 0) {
-      console.log('📭 No queued or processing jobs found')
-      
-      // Also check what jobs exist in general for debugging
-      const { data: allJobs } = await supabase
-        .from('document_jobs')
-        .select('id, status, created_at')
-        .order('created_at', { ascending: false })
-        .limit(5)
-      
-      console.log('📊 Recent jobs:', allJobs)
-      return NextResponse.json({ 
-        message: 'No jobs to process',
-        debug: {
-          totalRecentJobs: allJobs?.length || 0,
-          recentJobs: allJobs || []
-        }
-      }, { status: 200 })
-    }
-
-    const job = jobs[0]
-    console.log(`Processing job ${job.id} for document ${job.document_id} (status: ${job.status})`)
-    console.log(`Job documents:`, job.documents)
-
     // Only update to processing if job is queued (not already processing)
     if (job.status === 'queued') {
       // Mark job as processing
@@ -102,8 +42,8 @@ export async function GET(request: NextRequest) {
         .eq('id', job.id)
 
       if (updateJobError) {
-        console.error('Error updating job status:', updateJobError)
-        return NextResponse.json({ error: 'Failed to update job status' }, { status: 500 })
+        logger.error('Error updating job status', updateJobError, { jobId: job.id })
+        throw new Error('Failed to update job status')
       }
 
       // Mark document as processing
@@ -113,36 +53,107 @@ export async function GET(request: NextRequest) {
         .eq('id', job.document_id)
 
       if (updateDocError) {
-        console.error('Error updating document status:', updateDocError)
+        logger.error('Error updating document status', updateDocError, { 
+          jobId: job.id, 
+          documentId: job.document_id 
+        })
       }
     } else {
-      console.log(`Job ${job.id} already in processing status, checking batch operation...`)
+      logger.info('Job already in processing status, checking batch operation', { 
+        jobId: job.id, 
+        status: job.status 
+      })
     }
 
     try {
-      // Try to get document from join, fallback to separate query if needed
-      let document = job.documents?.[0]
+      // OPTIMIZED: Document should always be available from JOIN, no fallback needed
+      const joinedDocument = job.documents
+      let document = Array.isArray(joinedDocument) ? joinedDocument[0] : joinedDocument
       
       if (!document) {
-        console.log(`Document not found in join for job ${job.id}, fetching separately...`)
-        const { data: docData, error: docError } = await supabase
+        // Debug: Check if document exists independently
+        const { data: directDocument, error: directError } = await supabase
           .from('documents')
           .select('id, title, filename, file_path, file_size, user_id')
           .eq('id', job.document_id)
           .single()
         
-        if (docError || !docData) {
-          throw new Error(`Document ${job.document_id} not found: ${docError?.message || 'Unknown error'}`)
-        }
+        // Also check if there's a foreign key constraint issue
+        const { data: jobDocCheck, error: jobDocError } = await supabase
+          .from('document_jobs')
+          .select(`
+            id,
+            document_id,
+            user_id,
+            documents (
+              id,
+              title,
+              user_id
+            )
+          `)
+          .eq('id', job.id)
+          .single()
         
-        document = docData
+        logger.error('Document not found in JOIN query - comprehensive debugging', undefined, { 
+          jobId: job.id, 
+          documentId: job.document_id,
+          directDocumentExists: !!directDocument,
+          directError: directError?.message,
+          jobUserIdFromJob: job.user_id,
+          documentUserIdIfExists: directDocument?.user_id,
+          joinResult: job.documents,
+          jobDocCheck: jobDocCheck?.documents,
+          jobDocError: jobDocError?.message,
+          supabaseClientType: 'service_role'
+        })
+        
+        if (directDocument) {
+          logger.error('Document exists independently but not in JOIN - RLS or foreign key issue', undefined, {
+            jobId: job.id,
+            documentId: job.document_id,
+            documentUserId: directDocument.user_id,
+            jobUserId: job.user_id,
+            userIdsMatch: directDocument.user_id === job.user_id,
+            documentPath: directDocument.file_path,
+            documentTitle: directDocument.title
+          })
+          
+          // CRITICAL FIX: Use the direct document if it exists
+          console.warn('🔧 Using direct document lookup as workaround for JOIN issue')
+          const workingDocument = {
+            id: directDocument.id,
+            title: directDocument.title,
+            filename: directDocument.title, // Use title as fallback
+            file_path: directDocument.file_path,
+            file_size: directDocument.file_size,
+            user_id: directDocument.user_id
+          }
+          
+          // Continue processing with the directly fetched document
+          logger.info('Continuing with direct document lookup workaround', {
+            jobId: job.id,
+            documentId: directDocument.id,
+            component: 'cron-job'
+          })
+          
+          // Replace the missing document in the job object
+          job.documents = [workingDocument]
+          document = workingDocument
+        } else {
+          throw new Error(`Document ${job.document_id} not found - possible data integrity issue`)
+        }
       }
 
       // Determine processing method if not already set
       let processingMethod = job.processing_method
       if (!processingMethod || processingMethod === 'sync') {
-        const shouldUseBatch = needsBatchProcessing(document.file_size, document.filename)
-        processingMethod = shouldUseBatch ? 'batch' : 'sync'
+        // For already processing jobs, check if they have batch_operation_id to determine method
+        if (job.status === 'processing' && job.batch_operation_id) {
+          processingMethod = 'batch'
+        } else {
+          const shouldUseBatch = needsBatchProcessing(document.file_size, document.filename)
+          processingMethod = shouldUseBatch ? 'batch' : 'sync'
+        }
         
         // Update job with determined processing method
         await supabase
@@ -151,13 +162,17 @@ export async function GET(request: NextRequest) {
           .eq('id', job.id)
       }
 
-      console.log(`Processing job ${job.id} using ${processingMethod} method`)
+      logger.info('Processing method determined', { 
+        jobId: job.id, 
+        method: processingMethod,
+        batchOperationId: job.batch_operation_id 
+      })
 
       if (processingMethod === 'batch') {
         // Handle batch processing
         if (!job.batch_operation_id) {
           // Start new batch operation
-          console.log('Starting batch processing...')
+          logger.info('Starting batch processing', { jobId: job.id, documentId: job.document_id })
           const operationId = await batchProcessor.startBatchProcessing(job.document_id)
           
           // Update job with operation ID
@@ -166,189 +181,428 @@ export async function GET(request: NextRequest) {
             .update({ batch_operation_id: operationId })
             .eq('id', job.id)
           
-          console.log(`Batch operation started: ${operationId}`)
+          logger.info('Batch operation started', { jobId: job.id, operationId })
           
-          return NextResponse.json({
+          return {
             message: 'Batch processing initiated',
             jobId: job.id,
             documentId: job.document_id,
             operationId: operationId
-          })
+          }
         } else {
           // Check existing batch operation status
-          console.log(`Checking batch operation: ${job.batch_operation_id}`)
-          const status = await batchProcessor.checkBatchOperationStatus(job.batch_operation_id)
+          logger.debug('Checking batch operation status', { 
+            jobId: job.id, 
+            operationId: job.batch_operation_id 
+          })
+          const status = await batchProcessor.getOperationStatus(job.batch_operation_id)
           
-          if (status.status === 'SUCCEEDED') {
-            // Process batch results
-            await batchProcessor.processBatchResults(job.document_id, job.batch_operation_id)
+          if (status.status === 'SUCCEEDED' || status.status === 'FAILED') {
+            logger.info('Batch operation completed', { 
+              jobId: job.id, 
+              operationId: job.batch_operation_id 
+            })
             
-            // Generate embeddings (same as sync processing)
-            const { data: doc } = await supabase
-              .from('documents')
-              .select('extracted_text')
-              .eq('id', job.document_id)
-              .single()
-              
-            if (doc?.extracted_text) {
-              // Import embeddings function
-              const { generateAndIndexEmbeddings } = await import('@/lib/document-processing')
-              try {
-                console.log('Generating embeddings for batch processed document...')
-                await generateAndIndexEmbeddings(job.document_id, doc.extracted_text)
-                console.log('Embeddings generation completed successfully')
-              } catch (embeddingError) {
-                console.error('Embedding generation failed, completing without embeddings:', embeddingError)
-                
-                // Update document with a note about missing embeddings
-                await supabase
-                  .from('documents')
-                  .update({ 
-                    metadata: { 
-                      embeddings_skipped: true,
-                      embeddings_error: embeddingError instanceof Error ? embeddingError.message : 'Network timeout'
-                    }
-                  })
-                  .eq('id', job.document_id)
-              }
+            const jobStartedAt = job.started_at ? new Date(job.started_at).getTime() : undefined
+            const batchDuration = jobStartedAt ? Math.max(Date.now() - jobStartedAt, 0) : undefined
+            const finalJobStatus = status.status === 'SUCCEEDED' ? 'completed' : 'failed'
+            const summaryPayload = {
+              ...(job.result_summary || {}),
+              switchedToBatch: true,
+              batchStatus: status.status,
+              processing_time_ms: batchDuration,
+              completed_at: new Date().toISOString()
             }
-            
-            // Cleanup batch files
-            await batchProcessor.cleanupBatchOperation(job.document_id)
-            
-            // Mark job and document as completed
+
+            // Mark job as completed/failed based on batch outcome
             await supabase
               .from('document_jobs')
               .update({ 
-                status: 'completed',
-                completed_at: new Date().toISOString()
+                status: finalJobStatus,
+                completed_at: new Date().toISOString(),
+                processing_time_ms: batchDuration,
+                processing_method: 'batch',
+                result_summary: summaryPayload 
               })
               .eq('id', job.id)
-
+            
+            // CRITICAL FIX: Also update document status to completed
             await supabase
               .from('documents')
-              .update({ status: 'completed' })
+              .update({ 
+                status: status.status === 'SUCCEEDED' ? 'completed' : 'failed',
+                updated_at: new Date().toISOString() 
+              })
               .eq('id', job.document_id)
-
-            console.log(`Batch processing completed for job ${job.id}`)
             
-            return NextResponse.json({
+            return {
               message: 'Batch processing completed',
               jobId: job.id,
-              documentId: job.document_id
-            })
-            
-          } else if (status.status === 'FAILED') {
-            throw new Error(`Batch operation failed: ${status.error}`)
+              documentId: job.document_id,
+              operationId: job.batch_operation_id
+            }
           } else {
-            // Still running - leave job as processing
-            console.log(`Batch operation still running: ${status.progress || 0}%`)
-            return NextResponse.json({
+            logger.debug('Batch operation still in progress', { 
+              jobId: job.id, 
+              operationId: job.batch_operation_id 
+            })
+            return {
               message: 'Batch processing in progress',
               jobId: job.id,
               documentId: job.document_id,
-              progress: status.progress || 0
-            })
+              operationId: job.batch_operation_id
+            }
           }
         }
       } else {
-        // Handle synchronous processing (existing logic)
+        // Handle synchronous processing
+        logger.info('Starting synchronous processing', { 
+          jobId: job.id, 
+          documentId: job.document_id 
+        })
+        const processingStartedAt = Date.now()
         const result = await processDocument(job.document_id)
 
-        if (result && result.switchedToBatch) {
-          // Document processor switched to batch processing
-          console.log(`Document ${job.document_id} switched to batch processing`)
+        if (result.switchedToBatch) {
+          logger.info('Document switched to batch processing', { 
+            jobId: job.id, 
+            documentId: job.document_id 
+          })
           
-          // Update job to batch processing method
+          // Update job to reflect batch processing switch
           await supabase
             .from('document_jobs')
-            .update({ 
+            .update({
               processing_method: 'batch',
-              status: 'processing' // Keep as processing for batch
+              result_summary: {
+                ...(result.metrics || {}),
+                switchedToBatch: true,
+                rerouted_at: new Date().toISOString()
+              }
             })
             .eq('id', job.id)
           
-          return NextResponse.json({ 
-            message: 'Document switched to batch processing',
+          return {
+            message: 'Switched to batch processing',
             jobId: job.id,
             documentId: job.document_id,
             switchedToBatch: true
-          })
+          }
         } else {
-          // Normal sync processing completed
+          const processingTimeMs = Date.now() - processingStartedAt
+          const summaryPayload = {
+            ...(result.metrics || {}),
+            switchedToBatch: false,
+            processing_time_ms: processingTimeMs,
+            completed_at: new Date().toISOString()
+          }
+          // Mark job as completed
           await supabase
             .from('document_jobs')
             .update({ 
               status: 'completed',
-              completed_at: new Date().toISOString()
+              completed_at: new Date().toISOString(),
+              processing_time_ms: processingTimeMs,
+              processing_method: 'sync',
+              result_summary: summaryPayload 
             })
             .eq('id', job.id)
-
-          console.log(`Successfully processed job ${job.id} (sync)`)
           
-          return NextResponse.json({ 
-            message: 'Document processed successfully (sync)',
+          // CRITICAL FIX: Also update document status to completed
+          await supabase
+            .from('documents')
+            .update({ 
+              status: 'completed',
+              updated_at: new Date().toISOString() 
+            })
+            .eq('id', job.document_id)
+          
+          logger.info('Synchronous processing completed', { 
+            jobId: job.id, 
+            documentId: job.document_id 
+          })
+          
+          return {
+            message: 'Synchronous processing completed',
             jobId: job.id,
             documentId: job.document_id
-          })
+          }
         }
       }
 
     } catch (processingError) {
-      console.error(`Error processing document ${job.document_id}:`, processingError)
-
-      const errorMessage = processingError instanceof Error 
-        ? processingError.message 
-        : 'Unknown processing error'
-
-      // Check if we should retry
+      logger.error('Processing error occurred', processingError as Error, { 
+        jobId: job.id, 
+        documentId: job.document_id 
+      })
+      
+      // Check if we should retry or fail permanently
+      const errorMessage = processingError instanceof Error ? processingError.message : 'Unknown error'
       const shouldRetry = job.attempts < job.max_attempts
-      const newStatus = shouldRetry ? 'queued' : 'failed'
-
-      // Update job status
-      await supabase
-        .from('document_jobs')
-        .update({ 
-          status: newStatus,
-          error_message: errorMessage,
-          completed_at: shouldRetry ? null : new Date().toISOString()
-        })
-        .eq('id', job.id)
-
-      // Update document status
-      await supabase
-        .from('documents')
-        .update({ 
-          status: 'error',
-          processing_error: errorMessage
-        })
-        .eq('id', job.document_id)
-
+      
       if (shouldRetry) {
-        console.log(`Job ${job.id} will be retried (attempt ${job.attempts + 1}/${job.max_attempts})`)
-        return NextResponse.json({ 
-          message: 'Job failed, will retry',
-          jobId: job.id,
+        // Mark for retry
+        await supabase
+          .from('document_jobs')
+          .update({ status: 'queued' })
+          .eq('id', job.id)
+        
+        logger.warn('Job marked for retry', { 
+          jobId: job.id, 
           documentId: job.document_id,
           attempt: job.attempts + 1,
           maxAttempts: job.max_attempts
         })
-      } else {
-        console.log(`Job ${job.id} failed permanently after ${job.attempts + 1} attempts`)
-        return NextResponse.json({ 
-          error: 'Job failed permanently',
+        
+        return {
+          message: 'Job failed, marked for retry',
           jobId: job.id,
           documentId: job.document_id,
-          errorMessage: errorMessage
-        }, { status: 500 })
+          attempt: job.attempts + 1,
+          maxAttempts: job.max_attempts
+        }
+      } else {
+        // Mark as permanently failed
+        await supabase
+          .from('document_jobs')
+          .update({ 
+            status: 'failed',
+            completed_at: new Date().toISOString(),
+            error_message: errorMessage
+          })
+          .eq('id', job.id)
+        
+        logger.error('Job failed permanently', undefined, { 
+          jobId: job.id, 
+          documentId: job.document_id,
+          attempts: job.attempts + 1
+        })
+        
+        throw new Error(`Job failed permanently: ${errorMessage}`)
       }
     }
 
   } catch (error) {
-    console.error('Cron job error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error('Job processing error', error as Error, { 
+      jobId: job.id, 
+      documentId: job.document_id 
+    })
+    throw error
   }
 }
+
+export async function GET(request: NextRequest) {
+  return withRequestContext({ 
+    correlationId: generateCorrelationId(),
+    path: '/api/cron/process-jobs',
+    method: 'GET'
+  }, async () => {
+    let supabase: any = null
+    
+    try {
+      logger.info('Cron job started', { 
+        component: 'cron-job',
+        operation: 'process-jobs',
+        path: '/api/cron/process-jobs'
+      })
+
+      // Verify this is called by Vercel Cron
+      const authHeader = request.headers.get('authorization')
+      if (authHeader !== `Bearer ${process.env['CRON_SECRET']}`) {
+        logger.warn('Unauthorized cron job access attempt', { 
+          hasAuthHeader: !!authHeader,
+          component: 'cron-job' 
+        })
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+
+      // Create pooled service role client to bypass RLS
+      supabase = await createServiceClient()
+
+      // UNLIMITED PROCESSING - No concurrency limits for enterprise robustness
+      const maxConcurrentDocs = process.env['UNLIMITED_PROCESSING'] === 'true' 
+        ? Number.MAX_SAFE_INTEGER 
+        : parseInt(process.env['MAX_CONCURRENT_DOCUMENTS'] || '1000')
+      const largeDocThresholdMB = parseFloat(process.env['LARGE_DOCUMENT_THRESHOLD_MB'] || '5')
+      
+      const unlimitedMode = process.env['UNLIMITED_PROCESSING'] === 'true'
+      logger.info('Checking for queued jobs', { 
+        unlimitedMode,
+        maxConcurrentDocs: unlimitedMode ? 'unlimited' : maxConcurrentDocs,
+        largeDocThresholdMB,
+        component: 'cron-job'
+      })
+      
+      // Get currently processing jobs for monitoring (no limits in unlimited mode)
+      const { data: processingJobs, error: processingError } = await supabase
+        .from('document_jobs')
+        .select('id, documents(file_size)')
+        .eq('status', 'processing')
+      
+      if (processingError) {
+        logger.error('Error checking processing jobs', processingError, { component: 'cron-job' })
+      }
+      
+      const currentProcessing = processingJobs?.length || 0
+      const availableSlots = unlimitedMode ? Number.MAX_SAFE_INTEGER : Math.max(0, maxConcurrentDocs - currentProcessing)
+      
+      logger.info('Current processing status', { 
+        currentProcessing,
+        maxConcurrent: unlimitedMode ? 'unlimited' : maxConcurrentDocs,
+        availableSlots: unlimitedMode ? 'unlimited' : availableSlots,
+        unlimitedMode,
+        component: 'cron-job'
+      })
+    
+    // UNLIMITED MODE: Never block processing
+    if (!unlimitedMode && availableSlots === 0) {
+      console.warn('⏸️ All processing slots occupied, waiting for completion...')
+      return NextResponse.json({ 
+        message: 'All processing slots occupied',
+        currentProcessing,
+        maxConcurrent: maxConcurrentDocs,
+        systemStatus: 'at-capacity'
+      }, { status: 200 })
+    }
+    
+    // Get jobs that need processing (queued) OR jobs that are processing with batch operations (to check completion)
+    // CRITICAL FIX: Use inner join to ensure document exists
+    const { data: jobs, error: jobsError } = await supabase
+      .from('document_jobs')
+      .select(`
+        id,
+        document_id,
+        user_id,
+        status,
+        attempts,
+        max_attempts,
+        batch_operation_id,
+        processing_method,
+        started_at,
+        result_summary,
+        metadata,
+        documents!inner (
+          id,
+          title,
+          filename,
+          file_path,
+          file_size,
+          user_id
+        )
+      `)
+      .in('status', ['queued', 'processing'])
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(unlimitedMode ? 1000 : availableSlots * 2) // UNLIMITED: Process up to 1000 jobs per batch
+
+    if (jobsError) {
+      console.error('Error fetching jobs with JOIN:', jobsError)
+      
+      // Fallback: Try to get jobs without JOIN to debug RLS issue
+      const { data: fallbackJobs, error: fallbackError } = await supabase
+        .from('document_jobs')
+        .select('id, document_id, user_id, status')
+        .in('status', ['queued', 'processing'])
+        .limit(5)
+      
+      console.warn('🔍 Fallback query results:', {
+        fallbackJobs: fallbackJobs?.length || 0,
+        fallbackError: fallbackError?.message,
+        sampleJob: fallbackJobs?.[0]
+      })
+      
+      return NextResponse.json({ error: 'Failed to fetch jobs' }, { status: 500 })
+    }
+
+    if (!jobs || jobs.length === 0) {
+      console.warn('📭 No queued or processing jobs found')
+      
+      // Enhanced queue monitoring for enterprise scale
+      const { data: queueStats } = await supabase
+        .from('document_jobs')
+        .select('status, created_at')
+        .order('created_at', { ascending: false })
+        .limit(50)
+      
+      const stats = {
+        total: queueStats?.length || 0,
+        queued: queueStats?.filter((j: any) => j.status === 'queued').length || 0,
+        processing: queueStats?.filter((j: any) => j.status === 'processing').length || 0,
+        completed: queueStats?.filter((j: any) => j.status === 'completed').length || 0,
+        failed: queueStats?.filter((j: any) => j.status === 'failed').length || 0,
+        cancelled: queueStats?.filter((j: any) => j.status === 'cancelled').length || 0
+      }
+      
+      console.warn('📊 Queue Status:', stats)
+      console.warn(`⚡ System ready for ${unlimitedMode ? 'UNLIMITED' : 'enterprise-scale'} processing${unlimitedMode ? '' : ' (up to ' + maxConcurrentDocs + ' concurrent jobs)'}`)
+      
+      return NextResponse.json({ 
+        message: 'No jobs to process',
+        queueStats: stats,
+        maxConcurrency: unlimitedMode ? 'unlimited' : maxConcurrentDocs,
+        systemStatus: unlimitedMode ? 'unlimited-ready' : 'ready'
+      }, { status: 200 })
+    }
+
+    console.warn(`🚀 Found ${jobs.length} job(s) to process`)
+    console.warn(`⚡ ${unlimitedMode ? 'UNLIMITED' : 'Enterprise-scale'} processing: ${unlimitedMode ? '∞' : availableSlots} available slots`)
+    if (!unlimitedMode) {
+      console.warn(`📊 System capacity: ${currentProcessing + jobs.length}/${maxConcurrentDocs} (${Math.round((currentProcessing + jobs.length)/maxConcurrentDocs*100)}% utilization)`)
+    } else {
+      console.warn(`📊 UNLIMITED MODE: Processing ${currentProcessing + jobs.length} concurrent jobs with no limits`)
+    }
+    
+    const processingStartTime = Date.now()
+    
+    // Process jobs concurrently with Promise.allSettled to avoid failing all on one error
+    const jobPromises = jobs.map((job: any) => processJob(supabase, job))
+    const results = await Promise.allSettled(jobPromises)
+    
+    // Analyze results with enhanced metrics
+    const successful = results.filter(r => r.status === 'fulfilled').length
+    const failed = results.filter(r => r.status === 'rejected').length
+    const processingTime = Date.now() - processingStartTime
+    const throughput = jobs.length / (processingTime / 1000) // jobs per second
+    
+    console.warn(`✅ Processing complete: ${successful} successful, ${failed} failed`)
+    console.warn(`⚡ Processing time: ${processingTime}ms (${throughput.toFixed(2)} jobs/sec)`)
+    if (!unlimitedMode) {
+      console.warn(`📈 System capacity utilization: ${jobs.length}/${maxConcurrentDocs} slots (${Math.round(jobs.length/maxConcurrentDocs*100)}%)`)
+    } else {
+      console.warn(`📈 UNLIMITED MODE: Processed ${jobs.length} jobs simultaneously`)
+    }
+    
+    return NextResponse.json({
+      message: `Processed ${jobs.length} jobs`,
+      summary: {
+        total: jobs.length,
+        successful,
+        failed,
+        processingTimeMs: processingTime,
+        throughputJobsPerSec: parseFloat(throughput.toFixed(2)),
+        capacityUtilization: unlimitedMode ? 'unlimited' : `${jobs.length}/${maxConcurrentDocs} (${Math.round(jobs.length/maxConcurrentDocs*100)}%)`,
+        systemStatus: unlimitedMode ? 'unlimited-processing' : 'enterprise-ready',
+        details: results.map((result, index) => ({
+          jobId: jobs[index].id,
+          documentId: jobs[index].document_id,
+          status: result.status,
+          error: result.status === 'rejected' ? result.reason : null
+        }))
+      }
+    })
+
+  } catch (error) {
+    logger.error('Cron job processing failed', error as Error, { component: 'cron-job' })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  } finally {
+    // Always release the service client back to pool
+    if (supabase) {
+      releaseServiceClient(supabase)
+    }
+  }
+  })
+}
+
 
 // Also support POST for manual triggering (optional)
 export async function POST(request: NextRequest) {

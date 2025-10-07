@@ -1,3 +1,4 @@
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
 import { processDocument } from '../document-processing'
 import { createServiceClient } from '@/lib/supabase/server'
 import { DocumentProcessorServiceClient } from '@google-cloud/documentai'
@@ -6,28 +7,65 @@ import { indexDocumentInPinecone } from '@/lib/pinecone'
 import { batchProcessor } from '@/lib/document-ai-batch'
 
 // Mock all dependencies
-jest.mock('@/lib/supabase/server')
-jest.mock('@google-cloud/documentai')
-jest.mock('@/lib/embeddings-vertex')
-jest.mock('@/lib/pinecone')
-jest.mock('@/lib/document-ai-batch')
-jest.mock('@/lib/document-ai-config', () => ({
-  detectOptimalProcessor: jest.fn(() => 'general'),
-  getProcessorId: jest.fn(() => 'processor-123'),
-  getProcessorName: jest.fn(() => 'projects/test/locations/us/processors/processor-123')
+vi.mock('@/lib/supabase/server')
+vi.mock('@google-cloud/documentai')
+vi.mock('@/lib/embeddings-vertex')
+vi.mock('@/lib/pinecone')
+vi.mock('@/lib/document-ai-batch')
+vi.mock('@/lib/document-ai-config', () => ({
+  detectOptimalProcessor: vi.fn(() => 'general'),
+  getProcessorId: vi.fn(() => 'processor-123'),
+  getProcessorName: vi.fn(() => 'projects/test/locations/us/processors/processor-123')
 }))
 
-const mockCreateServiceClient = createServiceClient as jest.MockedFunction<typeof createServiceClient>
-const mockGenerateEmbeddings = generateEmbeddings as jest.MockedFunction<typeof generateEmbeddings>
-const mockIndexDocumentInPinecone = indexDocumentInPinecone as jest.MockedFunction<typeof indexDocumentInPinecone>
-const mockBatchProcessor = batchProcessor as jest.Mocked<typeof batchProcessor>
+// Mock retry logic and circuit breakers
+vi.mock('@/lib/retry-logic', () => ({
+  SmartRetry: {
+    execute: vi.fn(async (fn) => {
+      try {
+        const res = await fn()
+        console.log('SmartRetry result:', res)
+        return {
+          success: true,
+          result: res,
+          attempts: 1,
+          totalTime: 100
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error,
+          attempts: 1,
+          totalTime: 100
+        }
+      }
+    })
+  },
+  circuitBreakers: {
+    documentAI: {
+      execute: vi.fn(async (fn) => {
+        const res = await fn()
+        console.log('Circuit breaker result:', res)
+        return res
+      })
+    }
+  },
+  RetryConfigs: {
+    documentAI: { maxRetries: 3 }
+  }
+}))
+
+const mockCreateServiceClient = vi.mocked(createServiceClient)
+const mockGenerateEmbeddings = vi.mocked(generateEmbeddings)
+const mockIndexDocumentInPinecone = vi.mocked(indexDocumentInPinecone)
+const mockBatchProcessor = vi.mocked(batchProcessor)
 
 // Mock console methods to reduce test noise
 const originalConsoleLog = console.log
 const originalConsoleError = console.error
 beforeAll(() => {
-  console.log = jest.fn()
-  console.error = jest.fn()
+  console.log = vi.fn()
+  console.error = vi.fn()
 })
 afterAll(() => {
   console.log = originalConsoleLog
@@ -39,33 +77,50 @@ describe('Document Processing', () => {
   let mockDocumentAI: any
 
   beforeEach(() => {
-    jest.clearAllMocks()
+    vi.clearAllMocks()
 
     // Mock Supabase client
+    const singleMock = vi.fn().mockResolvedValue({
+      data: {
+        id: 'doc-123',
+        filename: 'test.pdf',
+        file_path: 'documents/test.pdf',
+        file_size: 1024 * 1024, // 1MB
+        metadata: { law_firm: 'Test Firm', subscription_agreement_start_page: 1, subscription_agreement_end_page: 10 }
+      },
+      error: null
+    })
+
+    const eqMock = vi.fn().mockReturnValue({ single: singleMock })
+    const returnsMock = vi.fn().mockReturnValue({ eq: eqMock })
+
+    const selectMock = vi.fn().mockReturnValue({
+      returns: returnsMock,
+      eq: eqMock
+    })
+
+    const updateMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    })
+
+    const insertMock = vi.fn().mockResolvedValue({ error: null })
+    const upsertMock = vi.fn().mockResolvedValue({ error: null })
+
+    const deleteMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    })
+
     mockSupabase = {
-      from: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({
-              data: {
-                id: 'doc-123',
-                filename: 'test.pdf',
-                file_path: 'documents/test.pdf',
-                file_size: 1024 * 1024, // 1MB
-                metadata: { law_firm: 'Test Firm' }
-              },
-              error: null
-            })
-          })
-        }),
-        insert: jest.fn().mockResolvedValue({ error: null }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null })
-        })
-      }),
+      from: vi.fn().mockImplementation((_table: string) => ({
+        select: selectMock,
+        insert: insertMock,
+        update: updateMock,
+        delete: deleteMock,
+        upsert: upsertMock
+      })),
       storage: {
-        from: jest.fn().mockReturnValue({
-          download: jest.fn().mockResolvedValue({
+        from: vi.fn().mockReturnValue({
+          download: vi.fn().mockResolvedValue({
             data: new Blob(['fake pdf content']),
             error: null
           })
@@ -75,7 +130,7 @@ describe('Document Processing', () => {
 
     // Mock Document AI client
     mockDocumentAI = {
-      processDocument: jest.fn().mockResolvedValue([{
+      processDocument: vi.fn().mockResolvedValue({
         document: {
           text: 'Extracted text from document',
           pages: [
@@ -103,21 +158,25 @@ describe('Document Processing', () => {
             }
           ]
         }
-      }])
+      })
     }
 
     // Setup mocks
     mockCreateServiceClient.mockReturnValue(mockSupabase)
-    ;(DocumentProcessorServiceClient as jest.Mock).mockImplementation(() => mockDocumentAI)
+    ;(DocumentProcessorServiceClient as vi.Mock).mockImplementation(() => mockDocumentAI)
     mockGenerateEmbeddings.mockResolvedValue([0.1, 0.2, 0.3])
     mockIndexDocumentInPinecone.mockResolvedValue(undefined)
   })
 
   describe('Sync Processing', () => {
     it('should successfully process a small document with sync processing', async () => {
+      // Debug: Check what our mock actually returns
+      console.log('Mock returns:', await mockDocumentAI.processDocument({}))
+      
       const result = await processDocument('doc-123')
 
-      expect(result).toEqual({})
+      expect(result.switchedToBatch).toBeFalsy()
+      expect(result.metrics).toBeDefined()
       expect(mockDocumentAI.processDocument).toHaveBeenCalledWith({
         name: 'projects/test/locations/us/processors/processor-123',
         rawDocument: {
@@ -128,7 +187,6 @@ describe('Document Processing', () => {
 
       // Verify document was updated with extracted data
       expect(mockSupabase.from().update).toHaveBeenCalledWith({
-        extracted_text: 'Extracted text from document',
         extracted_fields: expect.objectContaining({
           fields: expect.arrayContaining([
             expect.objectContaining({
@@ -136,7 +194,17 @@ describe('Document Processing', () => {
               value: 'Test Company',
               confidence: 0.9
             })
-          ])
+          ]),
+          entities: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'company',
+              value: 'Test Company'
+            })
+          ]),
+          tables: expect.any(Array),
+          processing_pipeline: expect.objectContaining({
+            version: expect.any(String)
+          })
         }),
         page_count: 1,
         status: 'processing'
@@ -154,7 +222,7 @@ describe('Document Processing', () => {
           type: 'text',
           confidence: 0.9,
           pageNumber: 1,
-          boundingBox: null
+          boundingBox: undefined
         }
       ])
     })
@@ -196,7 +264,8 @@ describe('Document Processing', () => {
 
       const result = await processDocument('doc-123')
 
-      expect(result).toEqual({ switchedToBatch: true })
+      expect(result.switchedToBatch).toBe(true)
+      expect(result.metrics).toBeDefined()
       expect(mockBatchProcessor.startBatchProcessing).toHaveBeenCalledWith('doc-123')
     })
 

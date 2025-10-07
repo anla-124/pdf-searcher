@@ -1,15 +1,14 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Upload, FileText, Loader2, Building, Users, Briefcase, Globe, AlertTriangle, CheckCircle, Clock, Info } from 'lucide-react'
+import { Upload, FileText, Loader2, Building, Users, Briefcase, Globe, AlertTriangle, CheckCircle, Info } from 'lucide-react'
 import { useFileValidation } from '@/lib/file-validation'
 import { 
   LAW_FIRM_OPTIONS, 
@@ -28,6 +27,19 @@ interface DocumentMetadata {
   fund_manager: FundManagerOption | ''
   fund_admin: FundAdminOption | ''
   jurisdiction: JurisdictionOption | ''
+  subscription_agreement_skipped: boolean
+  subscription_agreement_start_page: number | null
+  subscription_agreement_end_page: number | null
+}
+
+interface TouchedFields {
+  law_firm: boolean
+  fund_manager: boolean
+  fund_admin: boolean
+  jurisdiction: boolean
+  subscription_agreement_skipped: boolean
+  subscription_agreement_start_page: boolean
+  subscription_agreement_end_page: boolean
 }
 
 interface UploadFile {
@@ -37,6 +49,7 @@ interface UploadFile {
   status: 'pending' | 'uploading' | 'processing' | 'completed' | 'error' | 'validating'
   error?: string
   metadata: DocumentMetadata
+  touchedFields: TouchedFields
   validation?: {
     isValid: boolean
     issues: string[]
@@ -45,17 +58,18 @@ interface UploadFile {
   }
 }
 
-export function DocumentUpload() {
+interface DocumentUploadProps {
+  onUploadComplete?: () => void
+}
+
+export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
   const [files, setFiles] = useState<UploadFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
-  const [isValidating, setIsValidating] = useState(false)
-  const router = useRouter()
   const { validateFiles, getValidationSummary } = useFileValidation()
 
   const handleFileSelect = useCallback(async (selectedFiles: FileList | null) => {
     if (!selectedFiles) return
 
-    setIsValidating(true)
 
     const allFiles = Array.from(selectedFiles)
     const pdfFiles = allFiles.filter(file => file.type === 'application/pdf')
@@ -78,7 +92,16 @@ export function DocumentUpload() {
       id: Math.random().toString(36).substr(2, 9),
       progress: 0,
       status: 'validating' as const,
-      metadata: { ...DEFAULT_METADATA }
+      metadata: { ...DEFAULT_METADATA },
+      touchedFields: {
+        law_firm: false,
+        fund_manager: false,
+        fund_admin: false,
+        jurisdiction: false,
+        subscription_agreement_skipped: false,
+        subscription_agreement_start_page: false,
+        subscription_agreement_end_page: false
+      }
     }))
 
     setFiles(prev => [...prev, ...newFiles])
@@ -95,7 +118,7 @@ export function DocumentUpload() {
             ...f,
             status: validation.isValid ? 'pending' as const : 'error' as const,
             validation,
-            error: validation.isValid ? undefined : validation.issues.join(', ')
+            error: validation.isValid ? '' : validation.issues.join(', ')
           }
         }
         return f
@@ -106,7 +129,7 @@ export function DocumentUpload() {
       if (summary.invalid > 0) {
         alert(`${summary.invalid} file(s) failed validation. Please check the issues and try again.`)
       } else if (summary.totalWarnings > 0) {
-        console.log(`Validation completed with ${summary.totalWarnings} warning(s)`)
+        console.warn(`Validation completed with ${summary.totalWarnings} warning(s)`)
       }
 
     } catch (error) {
@@ -118,7 +141,6 @@ export function DocumentUpload() {
           : f
       ))
     } finally {
-      setIsValidating(false)
     }
   }, [validateFiles, getValidationSummary])
 
@@ -158,9 +180,9 @@ export function DocumentUpload() {
     // Optional: Trigger batch job processing after all uploads complete
     try {
       await fetch('/api/test/process-jobs')
-      console.log('Triggered batch job processing for all uploaded files')
-    } catch (error) {
-      console.log('Could not trigger batch processing (this is okay)')
+      console.warn('Triggered batch job processing for all uploaded files')
+    } catch (_error) {
+      console.warn('Could not trigger batch processing (this is okay)')
     }
   }
 
@@ -198,7 +220,7 @@ export function DocumentUpload() {
         throw new Error(errorData.error || 'Upload failed')
       }
 
-      const result = await response.json()
+      const _result = await response.json()
 
       // Upload completed successfully
       setFiles(prev => prev.map(f => 
@@ -207,7 +229,12 @@ export function DocumentUpload() {
           : f
       ))
 
-      console.log(`✅ Successfully uploaded: ${uploadFile.file.name}`)
+      console.warn(`✅ Successfully uploaded: ${uploadFile.file.name}`)
+      
+      // Trigger document list refresh
+      if (onUploadComplete) {
+        onUploadComplete()
+      }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Upload failed'
@@ -229,20 +256,106 @@ export function DocumentUpload() {
     setFiles(prev => prev.filter(f => f.status !== 'completed'))
   }
 
-  const updateFileMetadata = (fileId: string, field: keyof DocumentMetadata, value: string) => {
-    setFiles(prev => prev.map(f => 
-      f.id === fileId 
-        ? { ...f, metadata: { ...f.metadata, [field]: value } }
-        : f
-    ))
+const toPositiveIntegerOrNull = (value: string): number | null => {
+  if (value.trim() === '') return null
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return null
+  const rounded = Math.floor(parsed)
+  return rounded > 0 ? rounded : null
+}
+
+const updateFileMetadata = (fileId: string, field: keyof DocumentMetadata, value: string | number | boolean | null) => {
+  setFiles(prev => prev.map(f => 
+    f.id === fileId 
+      ? { 
+          ...f, 
+          metadata: { ...f.metadata, [field]: value },
+          touchedFields: { ...f.touchedFields, [field]: true }
+        }
+      : f
+  ))
+}
+
+const updateRangeMetadata = (
+  fileId: string,
+  field: keyof DocumentMetadata,
+  value: string
+) => {
+  const parsed = toPositiveIntegerOrNull(value)
+
+  setFiles(prev => prev.map(f => {
+    if (f.id !== fileId) return f
+    const updatedMetadata: DocumentMetadata = {
+      ...f.metadata,
+      [field]: parsed,
+      subscription_agreement_skipped: false
+    }
+
+    return {
+      ...f,
+      metadata: updatedMetadata,
+      touchedFields: {
+        ...f.touchedFields,
+        [field]: true,
+        subscription_agreement_skipped: true
+      }
+    }
+  }))
+}
+
+const toggleNoSubscriptionAgreement = (fileId: string, checked: boolean) => {
+  setFiles(prev => prev.map(f => {
+    if (f.id !== fileId) return f
+
+    const updatedMetadata: DocumentMetadata = {
+      ...f.metadata,
+      subscription_agreement_skipped: checked,
+      subscription_agreement_start_page: checked ? null : f.metadata.subscription_agreement_start_page,
+      subscription_agreement_end_page: checked ? null : f.metadata.subscription_agreement_end_page
+    }
+
+    return {
+      ...f,
+      metadata: updatedMetadata,
+      touchedFields: {
+        ...f.touchedFields,
+        subscription_agreement_skipped: true
+      }
+    }
+  }))
+}
+
+const getDropdownClassName = (uploadFile: UploadFile, field: keyof DocumentMetadata) => {
+  const baseClass = "h-8 text-xs transition-colors duration-200"
+  
+  if (!uploadFile.touchedFields[field]) {
+      // Orange border when untouched
+      return `${baseClass} border-orange-300 focus:border-orange-500 focus:ring-orange-500`
+    } else {
+      // Green border when touched
+      return `${baseClass} border-green-300 focus:border-green-500 focus:ring-green-500`
+    }
   }
 
-  const isMetadataComplete = (metadata: DocumentMetadata) => {
-    return metadata.law_firm !== '' && 
-           metadata.fund_manager !== '' && 
-           metadata.fund_admin !== '' && 
-           metadata.jurisdiction !== ''
-  }
+const isValidSubscriptionRange = (metadata: DocumentMetadata) => {
+  if (metadata.subscription_agreement_skipped) return true
+  const start = metadata.subscription_agreement_start_page
+  const end = metadata.subscription_agreement_end_page
+
+  if (start === null || end === null) return false
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false
+  if (start < 1 || end < 1) return false
+  if (end < start) return false
+  return true
+}
+
+const isMetadataComplete = (metadata: DocumentMetadata) => {
+  return metadata.law_firm !== '' && 
+         metadata.fund_manager !== '' && 
+         metadata.fund_admin !== '' && 
+         metadata.jurisdiction !== '' &&
+         isValidSubscriptionRange(metadata)
+}
 
   const canUpload = () => {
     const pendingFiles = files.filter(f => f.status === 'pending')
@@ -271,7 +384,7 @@ export function DocumentUpload() {
   }
 
   return (
-    <Card className="card-enhanced">
+    <Card className="card-enhanced" data-testid="upload-form">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Upload className="h-5 w-5" />
@@ -306,6 +419,7 @@ export function DocumentUpload() {
             multiple
             accept=".pdf"
             className="hidden"
+            data-testid="file-input"
             onChange={(e) => handleFileSelect(e.target.files)}
           />
         </div>
@@ -361,25 +475,15 @@ export function DocumentUpload() {
                               {/* File info */}
                               <span className="text-xs text-gray-400">
                                 {uploadFile.validation.fileInfo.sizeFormatted}
-                                {uploadFile.validation.fileInfo.pageCount && 
-                                  ` • ${uploadFile.validation.fileInfo.pageCount} pages`}
-                                {uploadFile.validation.fileInfo.estimatedProcessingTime && 
-                                  ` • ~${Math.round(uploadFile.validation.fileInfo.estimatedProcessingTime / 60)}min`}
                               </span>
                             </>
                           )}
                           
                           {/* Metadata status */}
-                          {uploadFile.status === 'pending' && (
-                            isMetadataComplete(uploadFile.metadata) ? (
-                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
-                                ✓ Ready
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700">
-                                ⚠ Metadata required
-                              </Badge>
-                            )
+                          {uploadFile.status === 'pending' && isMetadataComplete(uploadFile.metadata) && (
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
+                              ✓ Ready
+                            </Badge>
                           )}
                         </div>
                       </div>
@@ -430,32 +534,23 @@ export function DocumentUpload() {
                   {/* Metadata Dropdowns */}
                   {uploadFile.status === 'pending' && uploadFile.validation?.isValid && (
                     <div className="space-y-3">
-                      <p className="text-xs text-gray-600 dark:text-gray-400">
-                        Select metadata for this document (all fields required):
-                      </p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                         <div className="space-y-1">
                           <Label className="flex items-center gap-2 text-xs">
                             <Building className="h-3 w-3" />
                             Law Firm
                           </Label>
-                          <Select 
-                            value={uploadFile.metadata.law_firm} 
-                            onValueChange={(value: LawFirmOption) => 
-                              updateFileMetadata(uploadFile.id, 'law_firm', value)
+                          <SearchableSelect
+                            options={LAW_FIRM_OPTIONS as unknown as any[]}
+                            value={uploadFile.metadata.law_firm}
+                            onValueChange={(value: string) => 
+                              updateFileMetadata(uploadFile.id, 'law_firm', value as LawFirmOption)
                             }
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Please select" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {LAW_FIRM_OPTIONS.map(option => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Please select"
+                            searchPlaceholder="Search law firms..."
+                            className={getDropdownClassName(uploadFile, 'law_firm')}
+                            data-testid="law-firm-select"
+                          />
                         </div>
 
                         <div className="space-y-1">
@@ -463,23 +558,17 @@ export function DocumentUpload() {
                             <Users className="h-3 w-3" />
                             Fund Manager
                           </Label>
-                          <Select 
-                            value={uploadFile.metadata.fund_manager} 
-                            onValueChange={(value: FundManagerOption) => 
-                              updateFileMetadata(uploadFile.id, 'fund_manager', value)
+                          <SearchableSelect
+                            options={FUND_MANAGER_OPTIONS as unknown as any[]}
+                            value={uploadFile.metadata.fund_manager}
+                            onValueChange={(value: string) => 
+                              updateFileMetadata(uploadFile.id, 'fund_manager', value as FundManagerOption)
                             }
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Please select" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {FUND_MANAGER_OPTIONS.map(option => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Please select"
+                            searchPlaceholder="Search fund managers..."
+                            className={getDropdownClassName(uploadFile, 'fund_manager')}
+                            data-testid="fund-manager-select"
+                          />
                         </div>
 
                         <div className="space-y-1">
@@ -487,23 +576,17 @@ export function DocumentUpload() {
                             <Briefcase className="h-3 w-3" />
                             Fund Admin
                           </Label>
-                          <Select 
-                            value={uploadFile.metadata.fund_admin} 
-                            onValueChange={(value: FundAdminOption) => 
-                              updateFileMetadata(uploadFile.id, 'fund_admin', value)
+                          <SearchableSelect
+                            options={FUND_ADMIN_OPTIONS as unknown as any[]}
+                            value={uploadFile.metadata.fund_admin}
+                            onValueChange={(value: string) => 
+                              updateFileMetadata(uploadFile.id, 'fund_admin', value as FundAdminOption)
                             }
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Please select" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {FUND_ADMIN_OPTIONS.map(option => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Please select"
+                            searchPlaceholder="Search fund admins..."
+                            className={getDropdownClassName(uploadFile, 'fund_admin')}
+                            data-testid="fund-admin-select"
+                          />
                         </div>
 
                         <div className="space-y-1">
@@ -511,24 +594,61 @@ export function DocumentUpload() {
                             <Globe className="h-3 w-3" />
                             Jurisdiction
                           </Label>
-                          <Select 
-                            value={uploadFile.metadata.jurisdiction} 
-                            onValueChange={(value: JurisdictionOption) => 
-                              updateFileMetadata(uploadFile.id, 'jurisdiction', value)
+                          <SearchableSelect
+                            options={JURISDICTION_OPTIONS as unknown as any[]}
+                            value={uploadFile.metadata.jurisdiction}
+                            onValueChange={(value: string) => 
+                              updateFileMetadata(uploadFile.id, 'jurisdiction', value as JurisdictionOption)
                             }
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Please select" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {JURISDICTION_OPTIONS.map(option => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Please select"
+                            searchPlaceholder="Search jurisdictions..."
+                            className={getDropdownClassName(uploadFile, 'jurisdiction')}
+                            data-testid="jurisdiction-select"
+                          />
                         </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                        <div className="font-medium">Subscription Agreement Pages to Skip</div>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={uploadFile.metadata.subscription_agreement_start_page ?? ''}
+                          onChange={(event) =>
+                            updateRangeMetadata(
+                              uploadFile.id,
+                              'subscription_agreement_start_page',
+                              event.target.value
+                            )
+                          }
+                          className="h-8 w-20 text-xs"
+                          placeholder="From"
+                          disabled={uploadFile.metadata.subscription_agreement_skipped}
+                        />
+                        <Input
+                          type="number"
+                          min={1}
+                          value={uploadFile.metadata.subscription_agreement_end_page ?? ''}
+                          onChange={(event) =>
+                            updateRangeMetadata(
+                              uploadFile.id,
+                              'subscription_agreement_end_page',
+                              event.target.value
+                            )
+                          }
+                          className="h-8 w-20 text-xs"
+                          placeholder="To"
+                          disabled={uploadFile.metadata.subscription_agreement_skipped}
+                        />
+                        <label className="flex items-center gap-2 text-gray-600">
+                          <input
+                            type="checkbox"
+                            className="h-3 w-3"
+                            checked={uploadFile.metadata.subscription_agreement_skipped}
+                            onChange={(event) => toggleNoSubscriptionAgreement(uploadFile.id, event.target.checked)}
+                          />
+                          <span>N/A</span>
+                        </label>
                       </div>
                     </div>
                   )}
@@ -550,6 +670,7 @@ export function DocumentUpload() {
               onClick={uploadFiles}
               disabled={!canUpload()}
               className="w-full"
+              data-testid="upload-submit-button"
             >
               {files.some(f => f.status === 'uploading' || f.status === 'processing')
                 ? 'Processing...'

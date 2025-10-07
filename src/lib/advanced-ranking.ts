@@ -348,7 +348,7 @@ export class AdvancedRankingEngine {
   // Get ranking weights based on user behavior patterns
   static async getUserRankingPreferences(userId: string): Promise<RankingContext['userPreferences']> {
     try {
-      const supabase = createServiceClient()
+      const supabase = await createServiceClient()
       
       // This would analyze user behavior to determine preferences
       // For now, returning some default preferences
@@ -409,10 +409,19 @@ export class AdvancedRankingEngine {
       })
     }
     
-    return {
-      currentProject,
+    const result: {
+      currentProject?: string
+      focusAreas?: string[]
+      priorityMetadata?: Record<string, number>
+    } = {
       focusAreas: focusAreas || [],
       priorityMetadata
     }
+    
+    if (currentProject) {
+      result.currentProject = currentProject
+    }
+    
+    return result
   }
 }

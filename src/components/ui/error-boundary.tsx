@@ -83,7 +83,7 @@ function DefaultErrorFallback({ error, resetError }: { error: Error; resetError:
 
 export function ErrorBoundary({ children, fallback }: ErrorBoundaryProps) {
   return (
-    <ErrorBoundaryClass fallback={fallback}>
+    <ErrorBoundaryClass fallback={fallback || DefaultErrorFallback}>
       {children}
     </ErrorBoundaryClass>
   )

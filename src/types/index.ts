@@ -1,3 +1,10 @@
+// Re-export comprehensive types for enterprise-grade type safety
+export * from './external-apis'
+export * from './api-responses'
+
+// LEGACY TYPES - Maintained for backward compatibility
+// These will be gradually migrated to the new type system
+
 export interface User {
   id: string
   email: string
@@ -7,6 +14,7 @@ export interface User {
   updated_at: string
 }
 
+// DEPRECATED: Use DatabaseDocument from external-apis.ts instead
 export interface Document {
   id: string
   user_id: string
@@ -15,16 +23,16 @@ export interface Document {
   file_path: string
   file_size: number
   content_type: string
-  status: 'uploading' | 'queued' | 'processing' | 'completed' | 'error'
-  processing_error?: string
-  extracted_text?: string
-  extracted_fields?: Record<string, any>
+  status: 'uploading' | 'queued' | 'processing' | 'completed' | 'error' | 'cancelled' | 'cancelling'
+  processing_error?: string | null
+  extracted_fields?: Record<string, unknown> // FIXED: Replaced 'any' with 'unknown'
   metadata?: DocumentMetadata
   page_count?: number
   created_at: string
   updated_at: string
 }
 
+// DEPRECATED: Use BusinessMetadata from external-apis.ts instead
 export interface DocumentMetadata {
   investor_type?: string
   document_type?: string
@@ -38,7 +46,7 @@ export interface DocumentMetadata {
   fund_manager?: 'Blackstone' | 'KKR' | 'N/A' | ''
   fund_admin?: 'Standish' | 'CITCO' | 'N/A' | ''
   jurisdiction?: 'Delaware' | 'Cayman Islands' | 'N/A' | ''
-  custom_fields?: Record<string, any>
+  custom_fields?: Record<string, unknown> // FIXED: Replaced 'any' with 'unknown'
   embeddings_skipped?: boolean
   embeddings_error?: string
 }
@@ -103,7 +111,7 @@ export interface SearchFilters {
 
 export interface ProcessingStatus {
   document_id: string
-  status: 'queued' | 'processing' | 'completed' | 'error'
+  status: 'queued' | 'processing' | 'completed' | 'error' | 'cancelled' | 'cancelling'
   progress: number
   message?: string
   error?: string
@@ -113,7 +121,7 @@ export interface DocumentJob {
   id: string
   document_id: string
   user_id: string
-  status: 'queued' | 'processing' | 'completed' | 'failed'
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'cancelling'
   job_type: string
   priority: number
   attempts: number
@@ -129,10 +137,11 @@ export interface DocumentJob {
   metadata?: BatchJobMetadata
 }
 
+// DEPRECATED: Use comprehensive types from external-apis.ts instead
 export interface BatchJobMetadata {
   inputUri?: string
   outputUri?: string
   processorType?: string
-  operationMetadata?: Record<string, any>
-  [key: string]: any
+  operationMetadata?: Record<string, unknown> // FIXED: Replaced 'any' with 'unknown'
+  [key: string]: unknown // FIXED: Replaced 'any' with 'unknown'
 }

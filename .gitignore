@@ -10,11 +10,22 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+# Catch-all for stray environment configs (keep explicit templates tracked)
+*.env
+*.env.*
+!.env.example
+!.env.local.template
+!.env.docker.example
 
 # Google Cloud credentials (CRITICAL - Contains service account keys)
 credentials/
 credentials/**
 google-service-account.json
+# Other credential formats
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Exclude specific JSON files but allow config files
 package-lock.json

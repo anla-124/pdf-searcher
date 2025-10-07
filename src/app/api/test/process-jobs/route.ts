@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
       }, { status: 403 })
     }
 
-    console.log('🧪 Manual job processing triggered via test endpoint')
+    console.warn('🧪 Manual job processing triggered via test endpoint')
 
     // Create the URL for the cron endpoint
     const baseUrl = new URL(request.url).origin
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(cronUrl, {
       method: 'GET',
       headers: {
-        'authorization': `Bearer ${process.env.CRON_SECRET || 'test-secret-for-local-dev'}`,
+        'authorization': `Bearer ${process.env['CRON_SECRET'] || 'test-secret-for-local-dev'}`,
         'user-agent': 'Manual-Test-Trigger',
         'content-type': 'application/json'
       }

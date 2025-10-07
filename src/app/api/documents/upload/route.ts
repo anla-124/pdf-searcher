@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { processUploadedDocument, queueDocumentProcessingJob } from '@/lib/upload-optimization'
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
-    
+
     // Check authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
@@ -16,7 +17,25 @@ export async function POST(request: NextRequest) {
     const metadataString = formData.get('metadata') as string
     
     if (!file) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'No file provided' }, 
+        { status: 400 }
+      )
+    }
+
+    // Basic validation
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      return NextResponse.json(
+        { error: 'Only PDF files are supported' },
+        { status: 400 }
+      )
+    }
+
+    if (file.size > 50 * 1024 * 1024) { // 50MB limit
+      return NextResponse.json(
+        { error: 'File size exceeds 50MB limit' },
+        { status: 400 }
+      )
     }
 
     // Parse metadata if provided
@@ -26,16 +45,11 @@ export async function POST(request: NextRequest) {
         metadata = JSON.parse(metadataString)
       } catch (error) {
         console.error('Invalid metadata format:', error)
-        return NextResponse.json({ error: 'Invalid metadata format' }, { status: 400 })
+        return NextResponse.json(
+          { error: 'Invalid metadata format' }, 
+          { status: 400 }
+        )
       }
-    }
-
-    if (file.type !== 'application/pdf') {
-      return NextResponse.json({ error: 'Only PDF files are allowed' }, { status: 400 })
-    }
-
-    if (file.size > 50 * 1024 * 1024) { // 50MB limit
-      return NextResponse.json({ error: 'File size exceeds 50MB limit' }, { status: 400 })
     }
 
     // Generate unique filename
@@ -43,20 +57,26 @@ export async function POST(request: NextRequest) {
     const fileName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${fileExt}`
     const filePath = `${user.id}/${fileName}`
 
+    console.warn(`📤 Uploading file ${file.name} for user ${user.email}`)
+
     // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('documents')
       .upload(filePath, file, {
         cacheControl: '3600',
         upsert: false,
+        contentType: 'application/pdf',
       })
 
     if (uploadError) {
       console.error('Storage upload error:', uploadError)
-      return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 })
+      return NextResponse.json(
+        { error: 'Failed to upload file' }, 
+        { status: 500 }
+      )
     }
 
-    // Create document record with 'queued' status
+    // Create document record
     const { data: document, error: dbError } = await supabase
       .from('documents')
       .insert({
@@ -65,8 +85,8 @@ export async function POST(request: NextRequest) {
         filename: file.name,
         file_path: uploadData.path,
         file_size: file.size,
-        content_type: file.type,
-        status: 'uploading', // Will be changed to 'queued' after job creation
+        content_type: 'application/pdf',
+        status: 'uploading',
         metadata: metadata,
       })
       .select()
@@ -76,56 +96,87 @@ export async function POST(request: NextRequest) {
       console.error('Database error:', dbError)
       // Clean up uploaded file
       await supabase.storage.from('documents').remove([uploadData.path])
-      return NextResponse.json({ error: 'Failed to create document record' }, { status: 500 })
+      return NextResponse.json(
+        { error: 'Failed to create document record' }, 
+        { status: 500 }
+      )
     }
 
-    // Create processing job
-    console.log(`Creating job for document ${document.id}`)
-    const { data: job, error: jobError } = await supabase
-      .from('document_jobs')
-      .insert({
-        document_id: document.id,
-        user_id: user.id,
-        status: 'queued',
-        job_type: 'process_document',
-        priority: 0,
+    console.warn(`✅ Document record created: ${document.id}`)
+
+    // Queue processing job and start background execution
+    const { jobId, sizeAnalysis } = await queueDocumentProcessingJob({
+      documentId: document.id,
+      userId: user.id,
+      filename: file.name,
+      fileSize: file.size,
+      filePath: uploadData.path,
+      contentType: file.type || 'application/pdf',
+      metadata
+    })
+
+    if (!jobId) {
+      processUploadedDocument({
+        documentId: document.id,
+        userId: user.id,
+        filename: file.name,
+        fileSize: file.size,
+        filePath: uploadData.path,
+        contentType: file.type || 'application/pdf',
+        metadata,
+        sizeAnalysis
+      }).catch(error => {
+        console.error(`Background processing failed for ${document.id}:`, error)
       })
-      .select()
-      .single()
-
-    if (jobError) {
-      console.error('Job creation error:', jobError)
-      // Clean up document and file
-      await supabase.from('documents').delete().eq('id', document.id)
-      await supabase.storage.from('documents').remove([uploadData.path])
-      return NextResponse.json({ error: 'Failed to create processing job' }, { status: 500 })
     }
 
-    console.log(`Successfully created job ${job.id} for document ${document.id}`)
+    const isQueued = Boolean(jobId)
 
-    // Update document status to queued
-    console.log(`Updating document ${document.id} status to 'queued'`)
-    const { data: updatedDocument, error: statusError } = await supabase
-      .from('documents')
-      .update({ status: 'queued' })
-      .eq('id', document.id)
-      .select()
-
-    if (statusError) {
-      console.error('Status update error:', statusError)
-    } else {
-      console.log('Document status updated successfully:', updatedDocument)
+    if (isQueued) {
+      queueMicrotask(() => triggerCronProcessing(request))
     }
 
     return NextResponse.json({ 
       id: document.id,
-      jobId: job.id,
-      message: 'Document uploaded successfully and queued for processing',
-      status: 'queued'
+      jobId,
+      message: isQueued
+        ? 'Document uploaded successfully and queued for processing'
+        : 'Document uploaded successfully; processing started immediately',
+      status: isQueued ? 'queued' : 'processing'
     })
 
   } catch (error) {
     console.error('Upload error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+function triggerCronProcessing(request: NextRequest) {
+  const cronSecret = process.env['CRON_SECRET']
+  if (!cronSecret) {
+    console.warn('⚠️ CRON_SECRET not set; skipping auto-trigger of cron job')
+    return
+  }
+
+  try {
+    const cronUrl = new URL('/api/cron/process-jobs', request.url)
+    fetch(cronUrl.toString(), {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${cronSecret}`,
+        'user-agent': 'DocumentUploadAutoTrigger'
+      }
+    }).then(response => {
+      if (!response.ok) {
+        console.warn('Auto-triggered cron job returned non-OK response', {
+          status: response.status,
+          statusText: response.statusText
+        })
+      }
+    }).catch(error => {
+      console.warn('Auto-triggered cron job failed', error)
+    })
+  } catch (error) {
+    console.warn('Failed to construct cron trigger URL', error)
   }
 }

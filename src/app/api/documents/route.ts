@@ -1,43 +1,89 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import CacheManager, { createCacheHash } from '@/lib/cache'
+import { PaginationUtils, DatabasePagination } from '@/lib/utils/pagination'
+import { DatabaseDocumentWithContent } from '@/types/external-apis'
 
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient()
-    
+
     // Check authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Parse pagination and filter parameters
+    const paginationParams = PaginationUtils.parseParams(request)
     const { searchParams } = new URL(request.url)
-    const limit = parseInt(searchParams.get('limit') || '50')
-    const offset = parseInt(searchParams.get('offset') || '0')
     const status = searchParams.get('status')
     const search = searchParams.get('search')
-
-    // Create cache key for this specific query
-    const queryParams = { userId: user.id, limit, offset, status, search }
-    const cacheKey = createCacheHash(queryParams)
+    const includeJobs = searchParams.get('include_jobs') === 'true'
     
-    // Try to get from cache first (only for non-search queries and first page)
-    if (!search && offset === 0 && limit <= 50) {
-      const cachedDocuments = await CacheManager.getDashboardData(user.id)
-      if (cachedDocuments && cachedDocuments.documents) {
-        console.log(`🚀 Cache hit for documents list: ${user.id}`)
-        return NextResponse.json(cachedDocuments.documents.slice(0, limit))
-      }
+    // Validate pagination parameters
+    const validation = PaginationUtils.validateParams(paginationParams)
+    if (!validation.valid) {
+      return NextResponse.json({
+        error: 'Invalid pagination parameters',
+        details: validation.errors
+      }, { status: 400 })
     }
+
+    console.warn(`📋 GET /api/documents: Fetching documents for user ${user.id}`)
+
+    // Get total count for pagination (with same filters)
+    let countQuery = supabase
+      .from('documents')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+    
+    if (status) {
+      countQuery = countQuery.eq('status', status)
+    }
+    
+    if (search) {
+      countQuery = countQuery.or(`title.ilike.%${search}%,filename.ilike.%${search}%`)
+    }
+    
+    // Enhanced query with JOIN to avoid N+1 issues when job info is needed
+    const baseSelect = `
+      id,
+      user_id,
+      title,
+      filename,
+      file_path,
+      file_size,
+      content_type,
+      status,
+      processing_error,
+      extracted_fields,
+      metadata,
+      page_count,
+      created_at,
+      updated_at,
+      document_content(extracted_text)
+    `.trim()
+
+    const selectClause = includeJobs ? `
+      ${baseSelect},
+      document_jobs(
+        id,
+        status,
+        processing_method,
+        attempts,
+        error_message,
+        created_at,
+        updated_at
+      )
+    `.trim() : baseSelect
 
     let query = supabase
       .from('documents')
-      .select('*')
+      .select(selectClause)
+      .returns<DatabaseDocumentWithContent[]>()
       .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
 
+    // Apply filters
     if (status) {
       query = query.eq('status', status)
     }
@@ -45,25 +91,73 @@ export async function GET(request: NextRequest) {
     if (search) {
       query = query.or(`title.ilike.%${search}%,filename.ilike.%${search}%`)
     }
+    
+    // Apply pagination with proper sorting
+    query = DatabasePagination.applyPagination(query, paginationParams)
 
-    const { data: documents, error: dbError } = await query
+    const startTime = Date.now()
+    
+    // Execute both queries concurrently for better performance
+    const [documentsResult, countResult] = await Promise.all([
+      query,
+      countQuery
+    ])
+    
+    const { data: documents, error: dbError } = documentsResult
+    const { count } = countResult
 
     if (dbError) {
-      console.error('Database error:', dbError)
-      return NextResponse.json({ error: 'Failed to fetch documents' }, { status: 500 })
+      console.error('📋 Documents API: Database error:', dbError)
+      return NextResponse.json({ 
+        error: 'Failed to fetch documents',
+        code: 'DATABASE_ERROR',
+        details: dbError.message
+      }, { status: 500 })
     }
 
-    // Cache the results for basic queries (no search, first page)
-    if (!search && offset === 0 && limit <= 50 && documents) {
-      const dashboardData = { documents, cached_at: new Date().toISOString() }
-      await CacheManager.setDashboardData(user.id, dashboardData)
-      console.log(`💾 Cached documents list for user: ${user.id}`)
+    const queryTime = Date.now() - startTime
+    
+    // Flatten extracted_text from document_content for each document
+    const flattenedDocuments = documents?.map(doc => {
+      if (doc.document_content && doc.document_content.length > 0) {
+        return {
+          ...doc,
+          extracted_text: doc.document_content[0].extracted_text,
+          document_content: undefined // Remove the nested object
+        }
+      }
+      return doc
+    }) || []
+
+    // Create paginated response
+    const responseData = PaginationUtils.createPaginatedResponse(
+      flattenedDocuments,
+      count || 0,
+      paginationParams,
+      (request.url || '').split('?')[0] || '/api/documents',
+      { status: status || '', search: search || '', include_jobs: includeJobs.toString() }
+    )
+
+    // Add query metadata and backwards compatibility
+    const enhancedResponse = {
+      ...responseData,
+      documents: responseData.data, // Backwards compatibility for frontend
+      query_metadata: {
+        query_time_ms: queryTime,
+        cached: false,
+        fresh: true,
+        filters: { status, search, include_jobs: includeJobs },
+        sort: {
+          by: paginationParams.sortBy,
+          order: paginationParams.sortOrder
+        }
+      }
     }
 
-    return NextResponse.json(documents)
+    return NextResponse.json(enhancedResponse)
 
   } catch (error) {
-    console.error('Documents fetch error:', error)
+    console.error('Documents API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

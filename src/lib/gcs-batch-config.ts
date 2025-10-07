@@ -1,11 +1,12 @@
 import { Storage } from '@google-cloud/storage'
 import { getGoogleClientOptions } from '@/lib/google-credentials'
+import type { DocumentAIProcessResponse } from '@/types/external-apis'
 
 // Initialize Google Cloud Storage client
 const storage = new Storage(getGoogleClientOptions())
 
 export const GCS_CONFIG = {
-  BUCKET_NAME: process.env.GOOGLE_CLOUD_STORAGE_BUCKET!,
+  BUCKET_NAME: process.env['GOOGLE_CLOUD_STORAGE_BUCKET']!,
   BATCH_INPUT_PREFIX: 'batch-processing/input/',
   BATCH_OUTPUT_PREFIX: 'batch-processing/output/',
   TEMP_FILE_TTL_HOURS: 24, // Clean up temp files after 24 hours
@@ -34,7 +35,7 @@ export class GCSBatchManager {
     return `gs://${GCS_CONFIG.BUCKET_NAME}/${gcsFileName}`
   }
 
-  async downloadBatchResults(documentId: string): Promise<any[]> {
+  async downloadBatchResults(documentId: string): Promise<DocumentAIProcessResponse[]> {
     const outputPrefix = `${GCS_CONFIG.BATCH_OUTPUT_PREFIX}${documentId}/`
     console.log(`Looking for batch results with prefix: ${outputPrefix}`)
 
@@ -42,7 +43,7 @@ export class GCSBatchManager {
       prefix: outputPrefix,
     })
 
-    const results: any[] = []
+    const results: DocumentAIProcessResponse[] = []
 
     for (const file of files) {
       if (file.name.endsWith('.json')) {
@@ -94,7 +95,7 @@ export class GCSBatchManager {
         maxResults: 1,
       })
 
-      // Check if any JSON output files exist
+      // Check if JSON output files exist
       const hasResults = files.some(file => file.name.endsWith('.json'))
       
       if (hasResults) {

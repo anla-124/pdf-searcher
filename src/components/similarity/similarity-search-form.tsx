@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import React, { useState, useRef } from 'react'
 import { Document, SearchFilters } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableMultiSelect } from '@/components/ui/searchable-multi-select'
 import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { Search, Loader2, RotateCcw, X, Building, Users, Briefcase, Globe } from 'lucide-react'
@@ -32,7 +33,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
       use_entire_document: true
     }
   })
-  const [topK, setTopK] = useState(20)
+  const [topK, setTopK] = useState(10)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const handleSearch = async () => {
@@ -60,7 +61,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
       }
 
       const data = await response.json()
-      setResults(data)
+      setResults(data.results)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         console.log('Search cancelled by user')
@@ -89,13 +90,9 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
       min_score: 0.7,
       page_range: {
         use_entire_document: true
-      },
-      law_firm: [],
-      fund_manager: [],
-      fund_admin: [],
-      jurisdiction: []
+      }
     })
-    setTopK(20)
+    setTopK(10)
   }
 
   return (
@@ -110,7 +107,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                 Similarity Search
               </CardTitle>
               <CardDescription>
-                Find documents similar to &quot;{sourceDocument.title}&quot;
+                Search documents similar to &quot;{sourceDocument.title}&quot;
               </CardDescription>
             </div>
             <Button
@@ -124,75 +121,75 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-3">
           {/* Page Range Selection */}
-          <div className="space-y-4">
-            <div>
-              <Label className="text-base font-medium">Search Scope</Label>
-              <div className="flex gap-2 mt-2">
-                <Button
-                  type="button"
-                  variant={filters.page_range?.use_entire_document ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      use_entire_document: true
-                    }
-                  }))}
-                >
-                  Search entire document
-                </Button>
-                <Button
-                  type="button"
-                  variant={!filters.page_range?.use_entire_document ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setFilters(prev => ({
-                    ...prev,
-                    page_range: {
-                      ...prev.page_range,
-                      use_entire_document: false
-                    }
-                  }))}
-                >
-                  Search specific page range
-                </Button>
-              </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Search Scope</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={filters.page_range?.use_entire_document ? "default" : "outline"}
+                size="sm"
+                onClick={() => setFilters(prev => ({
+                  ...prev,
+                  page_range: {
+                    ...prev.page_range,
+                    use_entire_document: true
+                  }
+                }))}
+              >
+                Search entire document
+              </Button>
+              <Button
+                type="button"
+                variant={!filters.page_range?.use_entire_document ? "default" : "outline"}
+                size="sm"
+                onClick={() => setFilters(prev => ({
+                  ...prev,
+                  page_range: {
+                    ...prev.page_range,
+                    use_entire_document: false
+                  }
+                }))}
+              >
+                Search specific page range
+              </Button>
             </div>
 
             {!filters.page_range?.use_entire_document && (
-              <div className="grid grid-cols-2 gap-4 pl-6">
+              <div className="grid grid-cols-2 gap-3 pl-4">
                 <div>
-                  <Label htmlFor="startPage">From page</Label>
+                  <Label htmlFor="startPage" className="text-xs">From page</Label>
                   <Input
                     id="startPage"
                     type="number"
                     min="1"
                     placeholder="1"
+                    className="h-8"
                     value={filters.page_range?.start_page || ''}
                     onChange={(e) => setFilters(prev => ({
                       ...prev,
                       page_range: {
                         ...prev.page_range,
-                        start_page: e.target.value ? parseInt(e.target.value) : undefined
+                        start_page: e.target.value ? parseInt(e.target.value) : 1
                       }
                     }))}
                   />
                 </div>
                 <div>
-                  <Label htmlFor="endPage">To page</Label>
+                  <Label htmlFor="endPage" className="text-xs">To page</Label>
                   <Input
                     id="endPage"
                     type="number"
                     min="1"
                     placeholder="10"
+                    className="h-8"
                     value={filters.page_range?.end_page || ''}
                     onChange={(e) => setFilters(prev => ({
                       ...prev,
                       page_range: {
                         ...prev.page_range,
-                        end_page: e.target.value ? parseInt(e.target.value) : undefined
+                        end_page: e.target.value ? parseInt(e.target.value) : 1
                       }
                     }))}
                   />
@@ -202,145 +199,111 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
           </div>
 
           {/* Business Metadata Filters */}
-          <div className="space-y-4">
-            <div>
-              <Label className="text-base font-medium">Filters</Label>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Filters</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
               <div className="space-y-1">
-                <Label className="flex items-center gap-2 text-xs">
+                <Label className="flex items-center gap-1 text-xs">
                   <Building className="h-3 w-3" />
                   Law Firm
                 </Label>
-                <Select 
-                  value={filters.law_firm?.[0] || "any"} 
-                  onValueChange={(value) => 
+                <SearchableMultiSelect
+                  options={LAW_FIRM_OPTIONS as unknown as any[]}
+                  values={filters.law_firm || []}
+                  onValuesChange={(values) => 
                     setFilters(prev => ({ 
                       ...prev, 
-                      law_firm: value === "any" ? [] : [value as any] 
+                      law_firm: values as any
                     }))
                   }
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Any law firm" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="any">Any law firm</SelectItem>
-                    {LAW_FIRM_OPTIONS.map(option => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Any law firm"
+                  searchPlaceholder="Search law firms..."
+                  className="h-7 text-xs"
+                />
               </div>
 
               <div className="space-y-1">
-                <Label className="flex items-center gap-2 text-xs">
+                <Label className="flex items-center gap-1 text-xs">
                   <Users className="h-3 w-3" />
                   Fund Manager
                 </Label>
-                <Select 
-                  value={filters.fund_manager?.[0] || "any"} 
-                  onValueChange={(value) => 
+                <SearchableMultiSelect
+                  options={FUND_MANAGER_OPTIONS as unknown as any[]}
+                  values={filters.fund_manager || []}
+                  onValuesChange={(values) => 
                     setFilters(prev => ({ 
                       ...prev, 
-                      fund_manager: value === "any" ? [] : [value as any] 
+                      fund_manager: values as any
                     }))
                   }
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Any fund manager" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="any">Any fund manager</SelectItem>
-                    {FUND_MANAGER_OPTIONS.map(option => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Any fund manager"
+                  searchPlaceholder="Search fund managers..."
+                  className="h-7 text-xs"
+                />
               </div>
 
               <div className="space-y-1">
-                <Label className="flex items-center gap-2 text-xs">
+                <Label className="flex items-center gap-1 text-xs">
                   <Briefcase className="h-3 w-3" />
                   Fund Admin
                 </Label>
-                <Select 
-                  value={filters.fund_admin?.[0] || "any"} 
-                  onValueChange={(value) => 
+                <SearchableMultiSelect
+                  options={FUND_ADMIN_OPTIONS as unknown as any[]}
+                  values={filters.fund_admin || []}
+                  onValuesChange={(values) => 
                     setFilters(prev => ({ 
                       ...prev, 
-                      fund_admin: value === "any" ? [] : [value as any] 
+                      fund_admin: values as any
                     }))
                   }
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Any fund admin" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="any">Any fund admin</SelectItem>
-                    {FUND_ADMIN_OPTIONS.map(option => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Any fund admin"
+                  searchPlaceholder="Search fund admins..."
+                  className="h-7 text-xs"
+                />
               </div>
 
               <div className="space-y-1">
-                <Label className="flex items-center gap-2 text-xs">
+                <Label className="flex items-center gap-1 text-xs">
                   <Globe className="h-3 w-3" />
                   Jurisdiction
                 </Label>
-                <Select 
-                  value={filters.jurisdiction?.[0] || "any"} 
-                  onValueChange={(value) => 
+                <SearchableMultiSelect
+                  options={JURISDICTION_OPTIONS as unknown as any[]}
+                  values={filters.jurisdiction || []}
+                  onValuesChange={(values) => 
                     setFilters(prev => ({ 
                       ...prev, 
-                      jurisdiction: value === "any" ? [] : [value as any] 
+                      jurisdiction: values as any
                     }))
                   }
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Any jurisdiction" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="any">Any jurisdiction</SelectItem>
-                    {JURISDICTION_OPTIONS.map(option => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Any jurisdiction"
+                  searchPlaceholder="Search jurisdictions..."
+                  className="h-7 text-xs"
+                />
               </div>
             </div>
           </div>
 
           {/* Search Parameters */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <Label htmlFor="topK">Number of Results</Label>
+              <Label htmlFor="topK" className="text-xs">Number of Results</Label>
               <Select value={topK.toString()} onValueChange={(value) => setTopK(parseInt(value))}>
-                <SelectTrigger>
+                <SelectTrigger className="h-8">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="5">5 results</SelectItem>
                   <SelectItem value="10">10 results</SelectItem>
+                  <SelectItem value="15">15 results</SelectItem>
                   <SelectItem value="20">20 results</SelectItem>
-                  <SelectItem value="50">50 results</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div>
-              <Label htmlFor="minScore">Minimum Similarity: {Math.round((filters.min_score || 0.7) * 100)}%</Label>
-              <div className="px-2 py-2">
+              <Label htmlFor="minScore" className="text-xs">Minimum Similarity: {Math.round((filters.min_score || 0.7) * 100)}%</Label>
+              <div className="px-1 py-1">
                 <Slider
                   min={0}
                   max={100}
@@ -348,11 +311,11 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   value={[Math.round((filters.min_score || 0.7) * 100)]}
                   onValueChange={(value) => setFilters(prev => ({ 
                     ...prev, 
-                    min_score: value[0] / 100 
+                    min_score: (value[0] ?? 70) / 100 
                   }))}
                   className="w-full"
                 />
-                <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-2">
+                <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
                   <span>0%</span>
                   <span>50%</span>
                   <span>100%</span>
@@ -366,26 +329,29 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   <Button
                     onClick={handleStopSearch}
                     variant="destructive"
-                    className="flex-1"
+                    size="sm"
+                    className="flex-1 h-8"
                   >
-                    <X className="h-4 w-4 mr-2" />
-                    Stop Searching
+                    <X className="h-3 w-3 mr-1" />
+                    Stop
                   </Button>
                   <Button
                     disabled
                     variant="outline"
-                    className="flex-1"
+                    size="sm"
+                    className="flex-1 h-8"
                   >
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                     Searching...
                   </Button>
                 </>
               ) : (
                 <Button
                   onClick={handleSearch}
-                  className="w-full"
+                  size="sm"
+                  className="w-full h-8"
                 >
-                  <Search className="h-4 w-4 mr-2" />
+                  <Search className="h-3 w-3 mr-1" />
                   Search
                 </Button>
               )}

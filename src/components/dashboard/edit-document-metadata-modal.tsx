@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from 'react'
 import { Document } from '@/types'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Building, Users, Briefcase, Globe, Loader2, X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/searchable-select'
+import { Building, Users, Briefcase, Globe, Loader2 } from 'lucide-react'
 import { 
   LAW_FIRM_OPTIONS, 
   FUND_MANAGER_OPTIONS, 
@@ -33,7 +33,7 @@ interface EditableMetadata {
 }
 
 export function EditDocumentMetadataModal({ 
-  document, 
+  document: currentDocument, 
   isOpen, 
   onClose, 
   onSuccess 
@@ -49,31 +49,27 @@ export function EditDocumentMetadataModal({
 
   // Initialize metadata when document changes
   useEffect(() => {
-    if (document && isOpen) {
+    if (currentDocument && isOpen) {
       setMetadata({
-        law_firm: document.metadata?.law_firm || '',
-        fund_manager: document.metadata?.fund_manager || '',
-        fund_admin: document.metadata?.fund_admin || '',
-        jurisdiction: document.metadata?.jurisdiction || ''
+        law_firm: (currentDocument.metadata?.law_firm as any) || '',
+        fund_manager: (currentDocument.metadata?.fund_manager as any) || '',
+        fund_admin: (currentDocument.metadata?.fund_admin as any) || '',
+        jurisdiction: (currentDocument.metadata?.jurisdiction as any) || ''
       })
       setError('')
     }
-  }, [document, isOpen])
-
-  const initializeMetadata = (doc: Document) => {
-    setMetadata({
-      law_firm: doc.metadata?.law_firm || '',
-      fund_manager: doc.metadata?.fund_manager || '',
-      fund_admin: doc.metadata?.fund_admin || '',
-      jurisdiction: doc.metadata?.jurisdiction || ''
-    })
-    setError('')
-  }
+  }, [currentDocument, isOpen])
 
   // Reset form when modal opens/closes or document changes
   const handleOpenChange = (open: boolean) => {
-    if (open && document) {
-      initializeMetadata(document)
+    if (open && currentDocument) {
+      setMetadata({
+        law_firm: (currentDocument.metadata?.law_firm as any) || '',
+        fund_manager: (currentDocument.metadata?.fund_manager as any) || '',
+        fund_admin: (currentDocument.metadata?.fund_admin as any) || '',
+        jurisdiction: (currentDocument.metadata?.jurisdiction as any) || ''
+      })
+      setError('')
     } else if (!open) {
       onClose()
       setError('')
@@ -89,20 +85,20 @@ export function EditDocumentMetadataModal({
   }
 
   const handleSave = async () => {
-    if (!document || !isMetadataComplete()) return
+    if (!currentDocument || !isMetadataComplete()) return
 
     setIsLoading(true)
     setError('')
 
     try {
-      const response = await fetch(`/api/documents/${document.id}`, {
+      const response = await fetch(`/api/documents/${currentDocument.id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           metadata: {
-            ...document.metadata,
+            ...currentDocument.metadata,
             law_firm: metadata.law_firm,
             fund_manager: metadata.fund_manager,
             fund_admin: metadata.fund_admin,
@@ -127,63 +123,38 @@ export function EditDocumentMetadataModal({
     }
   }
 
-  if (!document) return null
-
-  if (!isOpen) return null
+  if (!currentDocument) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
-        onClick={() => handleOpenChange(false)}
-      />
-      
-      {/* Modal */}
-      <Card className="relative w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Edit Document Details</CardTitle>
-              <CardDescription>
-                Update the metadata for &quot;{document.title}&quot;
-              </CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleOpenChange(false)}
-              className="h-6 w-6 p-0"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardHeader>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-md">
+        <form className="space-y-4">
+        <DialogHeader>
+          <DialogTitle>Edit Document Details</DialogTitle>
+          <DialogDescription>
+            Update the metadata for &quot;{currentDocument.title}&quot;
+          </DialogDescription>
+        </DialogHeader>
 
-        <CardContent className="space-y-4">
+        <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4">
             <div className="space-y-2">
               <Label htmlFor="law-firm" className="flex items-center gap-2">
                 <Building className="h-4 w-4" />
                 Law Firm
               </Label>
-              <Select 
-                value={metadata.law_firm} 
-                onValueChange={(value: LawFirmOption) => 
-                  setMetadata(prev => ({ ...prev, law_firm: value }))
+              <SearchableSelect
+                options={LAW_FIRM_OPTIONS as unknown as any[]}
+                value={metadata.law_firm}
+                onValueChange={(value: string) =>
+                  setMetadata(prev => ({ ...prev, law_firm: value as LawFirmOption }))
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Please select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {LAW_FIRM_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Please select a law firm"
+                searchPlaceholder="Search law firms..."
+                allowClear={true}
+                emptyMessage="No law firms found"
+                disablePortal
+              />
             </div>
 
             <div className="space-y-2">
@@ -191,23 +162,18 @@ export function EditDocumentMetadataModal({
                 <Users className="h-4 w-4" />
                 Fund Manager
               </Label>
-              <Select 
-                value={metadata.fund_manager} 
-                onValueChange={(value: FundManagerOption) => 
-                  setMetadata(prev => ({ ...prev, fund_manager: value }))
+              <SearchableSelect
+                options={FUND_MANAGER_OPTIONS as unknown as any[]}
+                value={metadata.fund_manager}
+                onValueChange={(value: string) =>
+                  setMetadata(prev => ({ ...prev, fund_manager: value as FundManagerOption }))
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Please select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {FUND_MANAGER_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Please select a fund manager"
+                searchPlaceholder="Search fund managers..."
+                allowClear={true}
+                emptyMessage="No fund managers found"
+                disablePortal
+              />
             </div>
 
             <div className="space-y-2">
@@ -215,23 +181,18 @@ export function EditDocumentMetadataModal({
                 <Briefcase className="h-4 w-4" />
                 Fund Admin
               </Label>
-              <Select 
-                value={metadata.fund_admin} 
-                onValueChange={(value: FundAdminOption) => 
-                  setMetadata(prev => ({ ...prev, fund_admin: value }))
+              <SearchableSelect
+                options={FUND_ADMIN_OPTIONS as unknown as any[]}
+                value={metadata.fund_admin}
+                onValueChange={(value: string) =>
+                  setMetadata(prev => ({ ...prev, fund_admin: value as FundAdminOption }))
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Please select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {FUND_ADMIN_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Please select a fund admin"
+                searchPlaceholder="Search fund admins..."
+                allowClear={true}
+                emptyMessage="No fund admins found"
+                disablePortal
+              />
             </div>
 
             <div className="space-y-2">
@@ -239,50 +200,45 @@ export function EditDocumentMetadataModal({
                 <Globe className="h-4 w-4" />
                 Jurisdiction
               </Label>
-              <Select 
-                value={metadata.jurisdiction} 
-                onValueChange={(value: JurisdictionOption) => 
-                  setMetadata(prev => ({ ...prev, jurisdiction: value }))
+              <SearchableSelect
+                options={JURISDICTION_OPTIONS as unknown as any[]}
+                value={metadata.jurisdiction}
+                onValueChange={(value: string) =>
+                  setMetadata(prev => ({ ...prev, jurisdiction: value as JurisdictionOption }))
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Please select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {JURISDICTION_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Please select a jurisdiction"
+                searchPlaceholder="Search jurisdictions..."
+                allowClear={true}
+                emptyMessage="No jurisdictions found"
+                disablePortal
+              />
             </div>
           </div>
 
-          {error && (
-            <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/50 p-3 rounded">
-              {error}
-            </div>
-          )}
+        {error && (
+          <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/50 p-3 rounded">
+            {error}
+          </div>
+        )}
 
-          <div className="flex gap-3 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={isLoading}
-              className="flex-1"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={handleSave}
-              disabled={!isMetadataComplete() || isLoading}
-              className="flex-1"
-            >
-              {isLoading ? (
-                <>
+        <DialogFooter className="flex flex-col gap-3 pt-4 sm:flex-row sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={isLoading}
+            className="flex-1 sm:flex-none"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSave}
+            disabled={!isMetadataComplete() || isLoading}
+            className="flex-1 sm:flex-none"
+          >
+            {isLoading ? (
+              <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Saving...
                 </>
@@ -290,9 +246,10 @@ export function EditDocumentMetadataModal({
                 'Save Changes'
               )}
             </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        </DialogFooter>
+        </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

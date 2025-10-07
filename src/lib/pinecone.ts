@@ -1,160 +1,313 @@
 import { Pinecone } from '@pinecone-database/pinecone'
+import { createServiceClient } from '@/lib/supabase/server'
+import type { 
+  BusinessMetadata 
+} from '@/types/external-apis'
 
+// Simple Pinecone client without complex pooling
 const pinecone = new Pinecone({
-  apiKey: process.env.PINECONE_API_KEY!,
+  apiKey: process.env['PINECONE_API_KEY']!,
 })
 
-const indexName = process.env.PINECONE_INDEX_NAME || 'pdf-documents'
+const index = pinecone.Index(process.env['PINECONE_INDEX_NAME']!)
 
-export async function initializePineconeIndex() {
-  try {
-    const index = pinecone.Index(indexName)
-    return index
-  } catch (error) {
-    console.error('Error initializing Pinecone index:', error)
-    throw new Error(`Failed to initialize Pinecone index: ${error instanceof Error ? error.message : 'Unknown error'}`)
-  }
+export interface SimilaritySearchResult {
+  id: string
+  score: number
+  document_id: string
+  text: string
+  metadata?: BusinessMetadata
 }
 
+/**
+ * Index a document chunk in Pinecone
+ */
 export async function indexDocumentInPinecone(
-  vectorId: string,
-  embedding: number[],
+  id: string,
+  vector: number[],
   metadata: Record<string, any>
 ): Promise<void> {
   try {
-    const index = await initializePineconeIndex()
-    
-    console.log(`Indexing vector ${vectorId} with ${embedding.length} dimensions`)
-    
-    await index.upsert([{
-      id: vectorId,
-      values: embedding,
-      metadata: {
-        ...metadata,
-        // Ensure metadata is JSON serializable
-        timestamp: new Date().toISOString(),
-        embedding_model: 'vertex-ai-gecko', // Track which model was used
+    const sanitizedMetadata: Record<string, string | number | boolean | string[]> = {}
+
+    for (const [key, value] of Object.entries(metadata)) {
+      if (value === null || value === undefined) continue
+
+      if (Array.isArray(value)) {
+        const filtered = value
+          .filter(item => item !== null && item !== undefined)
+          .map(item => (typeof item === 'string' ? item : String(item)))
+
+        if (filtered.length > 0) {
+          sanitizedMetadata[key] = filtered
+        }
+        continue
       }
+
+      if (typeof value === 'object') {
+        sanitizedMetadata[key] = JSON.stringify(value)
+        continue
+      }
+
+      sanitizedMetadata[key] = value as string | number | boolean
+    }
+
+    await index.upsert([{
+      id,
+      values: vector,
+      metadata: sanitizedMetadata
     }])
     
-    console.log(`Indexed vector ${vectorId} in Pinecone with Vertex AI embeddings`)
+    console.warn(`✅ Indexed document chunk ${id}`)
   } catch (error) {
-    console.error('Error indexing document in Pinecone:', error)
-    if (error instanceof Error && error.message?.includes('dimension')) {
-      throw new Error('Pinecone index dimension mismatch. Vertex AI uses 768 dimensions. Please create a new Pinecone index with 768 dimensions.')
-    }
-    throw new Error(`Failed to index document in Pinecone: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error(`❌ Failed to index document chunk ${id}:`, error)
+    throw error
   }
 }
 
+/**
+ * Search for similar documents
+ */
 export async function searchSimilarDocuments(
-  queryEmbedding: number[],
-  topK: number = 10,
-  filter?: Record<string, any>
-): Promise<Array<{
-  id: string
-  score: number
-  metadata: Record<string, any>
-}>> {
+  documentId: string,
+  options: {
+    topK?: number
+    filter?: Record<string, any>
+    threshold?: number
+    userId?: string
+  } = {}
+): Promise<SimilaritySearchResult[]> {
   try {
-    const index = await initializePineconeIndex()
-    
-    const queryRequest: any = {
-      vector: queryEmbedding,
-      topK,
-      includeMetadata: true,
-      includeValues: false,
+    const { topK = 10, filter = {}, threshold = 0.7 } = options
+
+    // Get the vector for the source document
+    const sourceVector = await getDocumentVector(documentId)
+    if (!sourceVector) {
+      throw new Error(`No vector found for document ${documentId}`)
     }
 
-    if (filter) {
-      queryRequest.filter = filter
+    // Search for similar vectors
+    const queryRequest = {
+      vector: sourceVector,
+      topK: topK + 10, // Get extra results to filter out self-matches
+      filter: {
+        ...filter,
+        document_id: { $ne: documentId } // Exclude the source document
+      },
+      includeMetadata: true,
+      includeValues: false
     }
 
     const queryResponse = await index.query(queryRequest)
     
-    if (!queryResponse.matches) {
-      return []
-    }
+    // Filter results by threshold and format
+    const results = queryResponse.matches
+      ?.filter(match => match.score !== undefined && match.score >= threshold)
+      ?.slice(0, topK)
+      ?.map(match => ({
+        id: match.id,
+        score: match.score!,
+        document_id: (match.metadata as any)?.document_id as string,
+        text: (match.metadata as any)?.text as string,
+        metadata: match.metadata as BusinessMetadata
+      })) || []
 
-    return queryResponse.matches.map(match => ({
-      id: match.id,
-      score: match.score || 0,
-      metadata: match.metadata || {},
-    }))
+    console.warn(`🔍 Found ${results.length} similar documents for ${documentId}`)
+    return results
+
   } catch (error) {
-    console.error('Error searching similar documents in Pinecone:', error)
-    throw new Error(`Failed to search similar documents: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error(`❌ Similarity search failed for ${documentId}:`, error)
+    throw error
   }
 }
 
+/**
+ * Vector search with query text
+ */
+export async function vectorSearch(
+  queryVector: number[],
+  options: {
+    topK?: number
+    filter?: Record<string, any>
+    threshold?: number
+  } = {}
+): Promise<SimilaritySearchResult[]> {
+  try {
+    const { topK = 20, filter = {}, threshold = 0.7 } = options
+
+    const queryRequest = {
+      vector: queryVector,
+      topK,
+      filter,
+      includeMetadata: true,
+      includeValues: false
+    }
+
+    const queryResponse = await index.query(queryRequest)
+    
+    // Filter and format results
+    const results = queryResponse.matches
+      ?.filter(match => match.score !== undefined && match.score >= threshold)
+      ?.map(match => ({
+        id: match.id,
+        score: match.score!,
+        document_id: (match.metadata as any)?.document_id as string,
+        text: (match.metadata as any)?.text as string,
+        metadata: match.metadata as BusinessMetadata
+      })) || []
+
+    console.warn(`🔍 Vector search returned ${results.length} results`)
+    return results
+
+  } catch (error) {
+    console.error(`❌ Vector search failed:`, error)
+    throw error
+  }
+}
+
+/**
+ * Delete document vectors from Pinecone
+ */
 export async function deleteDocumentFromPinecone(documentId: string): Promise<void> {
   try {
-    const index = await initializePineconeIndex()
-    
-    // First, list all vectors for this document
-    const listResponse = await index.listPaginated({
-      prefix: `${documentId}_chunk_`,
-    })
+    // 1. Get all vector IDs from the database for this document
+    const supabase = await createServiceClient()
+    const { data: chunks, error: dbError } = await supabase
+      .from('document_embeddings')
+      .select('chunk_index')
+      .eq('document_id', documentId)
 
-    if (listResponse.vectors && listResponse.vectors.length > 0) {
-      const vectorIds = listResponse.vectors.map(v => v.id)
-      
-      // Delete all vectors for this document
-      await index.deleteMany(vectorIds)
-      
-      console.log(`Deleted ${vectorIds.length} vectors for document ${documentId} from Pinecone`)
+    if (dbError) {
+      throw new Error(`Failed to fetch chunk info for deletion from database: ${dbError.message}`)
     }
+
+    if (!chunks || chunks.length === 0) {
+      console.warn(`No chunks found in database for document ${documentId}, no vectors to delete from Pinecone.`)
+      return // Nothing to delete
+    }
+
+    const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
+
+    if (vectorIds.length === 0) {
+      console.warn(`No vector IDs computed for document ${documentId}, skipping Pinecone deletion.`)
+      return
+    }
+
+    // 2. Delete vectors from Pinecone by ID using the v6 SDK
+    await index.deleteMany(vectorIds)
+    
+    console.warn(`✅ Deleted ${vectorIds.length} vectors for document ${documentId} from Pinecone`)
   } catch (error) {
-    console.error('Error deleting document from Pinecone:', error)
-    // Don't throw here as this is cleanup - log the error but continue
+    console.error(`❌ Failed to delete vectors for document ${documentId}:`, error)
+    throw error
   }
 }
 
+/**
+ * Update document metadata in Pinecone
+ */
 export async function updateDocumentMetadataInPinecone(
   documentId: string,
-  metadata: Record<string, any>
+  newMetadata: Record<string, any>
 ): Promise<void> {
   try {
-    const index = await initializePineconeIndex()
+    console.warn(`📝 Starting Pinecone metadata update for document ${documentId}`)
     
-    // List all vectors for this document
-    const listResponse = await index.listPaginated({
-      prefix: `${documentId}_chunk_`,
+    // 1. Get all vector IDs from the database
+    const supabase = await createServiceClient()
+    const { data: chunks, error: dbError } = await supabase
+      .from('document_embeddings')
+      .select('chunk_index')
+      .eq('document_id', documentId)
+
+    if (dbError) {
+      throw new Error(`Failed to fetch chunk info from database: ${dbError.message}`)
+    }
+
+    if (!chunks || chunks.length === 0) {
+      console.warn(`No chunks found for document ${documentId}, skipping Pinecone update.`)
+      return
+    }
+
+    const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
+    
+    // 2. Fetch the full vectors from Pinecone
+    const fetchResponse = await index.fetch(vectorIds)
+    const vectors = Object.values(fetchResponse.records)
+
+    if (vectors.length === 0) {
+      console.warn(`No vectors found in Pinecone for document ${documentId}, skipping update.`)
+      return
+    }
+
+    // 3. Prepare updated vectors for upsert
+    const updatedVectors = vectors.map(vector => {
+      const existingMetadata = vector.metadata || {}
+      return {
+        id: vector.id,
+        values: vector.values,
+        metadata: {
+          ...existingMetadata,
+          ...newMetadata
+        }
+      }
     })
 
-    if (listResponse.vectors && listResponse.vectors.length > 0) {
-      const updates = listResponse.vectors.map(vector => ({
-        id: vector.id,
-        setMetadata: {
-          ...((vector as any).metadata || {}),
-          ...metadata,
-          timestamp: new Date().toISOString(),
-        }
-      }))
-      
-      // Update metadata for all chunks
-      for (const update of updates) {
-        await index.update({
-          id: update.id!,
-          metadata: update.setMetadata,
-        })
-      }
-      
-      console.log(`Updated metadata for ${updates.length} vectors of document ${documentId} in Pinecone`)
-    }
+    // 4. Upsert the vectors back into Pinecone
+    await index.upsert(updatedVectors)
+
+    console.warn(`✅ Successfully updated metadata for ${updatedVectors.length} vectors in Pinecone for document ${documentId}`)
+    
   } catch (error) {
-    console.error('Error updating document metadata in Pinecone:', error)
-    throw new Error(`Failed to update document metadata in Pinecone: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error(`❌ Failed to update metadata for document ${documentId}:`, error)
+    // In a production scenario, you might want to queue this for a retry
+    throw error
   }
 }
 
-export async function getIndexStats(): Promise<any> {
+/**
+ * Get document vector by ID
+ */
+async function getDocumentVector(documentId: string): Promise<number[] | null> {
   try {
-    const index = await initializePineconeIndex()
-    const stats = await index.describeIndexStats()
-    return stats
+    // Use a dummy vector to query for this document's vectors
+    // Create a zero vector of dimension 1536 (OpenAI embedding dimension)
+    const dummyVector = new Array(768).fill(0)
+    
+    const queryResponse = await index.query({
+      vector: dummyVector,
+      topK: 1,
+      filter: {
+        document_id: { $eq: documentId }
+      },
+      includeValues: true,
+      includeMetadata: false
+    })
+
+    if (queryResponse.matches && queryResponse.matches.length > 0 && queryResponse.matches[0] && queryResponse.matches[0].values) {
+      return queryResponse.matches[0].values as number[]
+    }
+
+    return null
   } catch (error) {
-    console.error('Error getting Pinecone index stats:', error)
-    throw new Error(`Failed to get index stats: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error(`❌ Failed to get vector for document ${documentId}:`, error)
+    return null
+  }
+}
+
+/**
+ * Get index statistics
+ */
+export async function getPineconeStats() {
+  try {
+    const stats = await index.describeIndexStats()
+    return {
+      totalVectorCount: stats.totalRecordCount,
+      dimension: stats.dimension,
+      indexFullness: stats.indexFullness
+    }
+  } catch (error) {
+    console.error('❌ Failed to get Pinecone stats:', error)
+    return null
   }
 }

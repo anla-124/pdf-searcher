@@ -1,18 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { 
-  LogOut, 
-  Home
-} from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import { LogOut } from 'lucide-react'
 import Image from 'next/image'
+import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 
 // Type definition for navigation items
 type NavigationItem = {
@@ -22,9 +19,7 @@ type NavigationItem = {
   badge?: string
 }
 
-const navigation: NavigationItem[] = [
-  { name: 'Dashboard', href: '/dashboard', icon: Home },
-]
+const navigation: NavigationItem[] = []
 
 export function Sidebar() {
   const [isLoading, setIsLoading] = useState(false)
@@ -38,16 +33,16 @@ export function Sidebar() {
     const checkDarkMode = () => {
       setIsDark(document.documentElement.classList.contains('dark'))
     }
-    
+
     checkDarkMode()
-    
+
     // Watch for theme changes
     const observer = new MutationObserver(checkDarkMode)
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['class']
     })
-    
+
     return () => observer.disconnect()
   }, [])
 
@@ -64,10 +59,9 @@ export function Sidebar() {
   }
 
   return (
-    <div 
-      className={`flex h-full w-64 flex-col border-r border-gray-200 dark:border-slate-700/50 sidebar-enhanced backdrop-blur-xl ${
-        isDark ? '' : 'bg-white'
-      }`}
+    <div
+      className={`flex h-full w-64 flex-col border-r border-gray-200 dark:border-slate-700/50 sidebar-enhanced backdrop-blur-xl ${isDark ? '' : 'bg-white'
+        }`}
       style={{
         backgroundColor: isDark ? '#0a1329' : undefined
       }}
@@ -76,11 +70,11 @@ export function Sidebar() {
       <div className="flex h-16 items-center px-6 border-b border-gray-200 dark:border-slate-700/50">
         <Link href="/dashboard" className="flex items-center space-x-3">
           <div className="flex h-10 w-10 items-center justify-center">
-            <Image 
-              src="/Mark Logo - Color.png" 
-              alt="Company Logo" 
-              width={40} 
-              height={40}
+            <Image
+              src="/Mark Logo - Color.png"
+              alt="Company Logo"
+              width={1080}
+              height={1080}
               className="h-10 w-10 object-contain"
             />
           </div>
@@ -100,10 +94,9 @@ export function Sidebar() {
               href={item.href}
               className={`
                 flex items-center rounded-lg px-3 py-2.5 text-sm font-medium transition-colors
-                ${
-                  isActive
-                    ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-white'
+                ${isActive
+                  ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-white'
                 }
               `}
             >

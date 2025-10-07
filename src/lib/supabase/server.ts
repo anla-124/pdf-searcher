@@ -1,50 +1,41 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { connectionPool } from './pool'
 
+/**
+ * Create an authenticated Supabase client with session context
+ * Uses connection pooling for better resource management
+ */
 export const createClient = async () => {
-  const cookieStore = await cookies()
-
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value
-        },
-        set(name: string, value: string, options: any) {
-          try {
-            cookieStore.set(name, value, options)
-          } catch (error) {
-            // The `set` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
-          }
-        },
-        remove(name: string, options: any) {
-          try {
-            cookieStore.set(name, '', { ...options, maxAge: 0 })
-          } catch (error) {
-            // The `remove` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
-          }
-        },
-      },
-    }
-  )
+  // For authenticated clients, we still need fresh cookie context per request
+  // So we use the pool's authenticated client method
+  return await connectionPool.getAuthenticatedClient()
 }
 
-export const createServiceClient = () => {
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      cookies: {
-        get() {
-          return null
-        },
-      },
-    }
-  )
+/**
+ * Create a service role Supabase client from the connection pool
+ * Reuses connections for better performance under load
+ */
+export const createServiceClient = async () => {
+  return await connectionPool.getServiceClient()
+}
+
+/**
+ * Release a service client back to the pool (optional optimization)
+ * Call this when you're done with long-running operations
+ */
+export const releaseServiceClient = (client: any) => {
+  connectionPool.releaseServiceClient(client)
+}
+
+/**
+ * Get connection pool health metrics for monitoring
+ */
+export const getPoolMetrics = () => {
+  return connectionPool.getMetrics()
+}
+
+/**
+ * Health check for the connection pool
+ */
+export const poolHealthCheck = async () => {
+  return await connectionPool.healthCheck()
 }

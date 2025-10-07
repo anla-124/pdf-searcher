@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import Link from 'next/link'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import { Document } from '@/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -12,8 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
+import { SearchableMultiSelect } from '@/components/ui/searchable-multi-select'
+import { SearchModeModal } from '@/components/similarity/search-mode-modal'
+import { EditDocumentMetadataModal } from './edit-document-metadata-modal'
 import { 
   FileText, 
+  Target,
   Search, 
   Calendar, 
   Filter, 
@@ -23,39 +27,62 @@ import {
   Clock,
   Sparkles,
   MoreVertical,
-  Copy,
   Trash2,
   Square,
   CheckSquare,
   X,
   Eye,
   Edit,
+  Edit2,
   Building,
   Users,
   Briefcase,
   Globe,
   ArrowUp,
   ArrowDown,
-  FilterX
+  FilterX,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Loader2
 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { EditDocumentMetadataModal } from './edit-document-metadata-modal'
 import { 
   LAW_FIRM_OPTIONS, 
   FUND_MANAGER_OPTIONS, 
   FUND_ADMIN_OPTIONS, 
   JURISDICTION_OPTIONS 
 } from '@/lib/metadata-constants'
+import { format } from 'date-fns'
+
+interface DocumentListProps {
+  refreshTrigger?: number
+}
+
+interface RenameDocumentDialogState {
+  document: Document | null
+  isOpen: boolean
+  newTitle: string
+  isRenaming: boolean
+}
 
 interface DocumentStatus {
+  status: Document['status']
   phase: string
   message: string
+  progress?: number
   estimatedTimeRemaining?: string
-  processingMethod: 'sync' | 'batch'
+  error?: string | null
+  lastUpdated?: string
   isStale?: boolean
 }
 
-export function EnhancedDocumentList() {
+interface SearchModeState {
+  document: Document | null
+  isOpen: boolean
+}
+
+export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) {
   const [documents, setDocuments] = useState<Document[]>([])
   const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -73,11 +100,76 @@ export function EnhancedDocumentList() {
   const [error, setError] = useState('')
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
   const [isSelectMode, setIsSelectMode] = useState(false)
-  const [deletingDocuments, setDeletingDocuments] = useState<Set<string>>(new Set())
   const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false)
-  const [isPolling, setIsPolling] = useState(false)
   const [editingDocument, setEditingDocument] = useState<Document | null>(null)
+  const [renameDialog, setRenameDialog] = useState<RenameDocumentDialogState>({
+    document: null,
+    isOpen: false,
+    newTitle: '',
+    isRenaming: false
+  })
+
+  const [deleteDialog, setDeleteDialog] = useState<{
+    document: Document | null
+    isOpen: boolean
+    isDeleting: boolean
+  }>({
+    document: null,
+    isOpen: false,
+    isDeleting: false
+  })
+  const [bulkDeleteState, setBulkDeleteState] = useState({
+    total: 0,
+    processed: 0,
+    isDeleting: false,
+  })
+  
+  const [sourceForSelectionId, setSourceForSelectionId] = useState<string | null>(null)
+  const [retryingDocuments, setRetryingDocuments] = useState<Set<string>>(new Set())
+  
+  // Search mode and source document state
+  const [searchModeModal, setSearchModeModal] = useState<SearchModeState>({
+    document: null,
+    isOpen: false
+  })
+  const [selectedSearchSourceDocument, setSelectedSearchSourceDocument] = useState<Document | null>(null)
+
+  // Track when we last kicked the cron endpoint so we don't spam requests
+  const [lastProcessingTrigger, setLastProcessingTrigger] = useState<number>(0)
+  
+  // Enhanced processing status tracking
   const [documentStatuses, setDocumentStatuses] = useState<Map<string, DocumentStatus>>(new Map())
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const documentsPerPage = 10
+  
+  // Router for navigation
+  const router = useRouter()
+
+  // Simple document fetching - no complex caching or polling
+  const fetchDocuments = useCallback(async (showLoading = true) => {
+    try {
+      if (showLoading) setIsLoading(true)
+      setError('')
+      
+      const response = await fetch('/api/documents', { cache: 'no-store' })
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch documents: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      setDocuments(data.documents || [])
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load documents'
+      setError(errorMessage)
+      console.error('Document fetch error:', err)
+    } finally {
+      if (showLoading) setIsLoading(false)
+    }
+  }, [])
 
   const handleDocumentUpdate = (updatedDocument: Document) => {
     setDocuments(prev => prev.map(doc => 
@@ -85,6 +177,305 @@ export function EnhancedDocumentList() {
     ))
     setEditingDocument(null)
   }
+
+  // Search mode handlers
+  const handleSetSearchModeDocument = useCallback((document: Document) => {
+    setSearchModeModal({
+      document,
+      isOpen: true
+    })
+  }, [])
+
+  const handleSelectedSearchClick = useCallback(() => {
+    if (searchModeModal.document) {
+      const sourceDocId = searchModeModal.document.id
+      setSourceForSelectionId(sourceDocId) // Set the source doc
+      setIsSelectMode(true)
+      setSelectedDocuments(prev => new Set(prev).add(sourceDocId))
+    }
+  }, [searchModeModal.document])
+
+  const closeSearchModeModal = useCallback(() => {
+    setSearchModeModal({
+      document: null,
+      isOpen: false
+    })
+  }, [])
+
+  const openRenameDialog = (document: Document) => {
+    setRenameDialog({
+      document,
+      isOpen: true,
+      newTitle: document.title,
+      isRenaming: false
+    })
+  }
+
+  const closeRenameDialog = () => {
+    setRenameDialog({
+      document: null,
+      isOpen: false,
+      newTitle: '',
+      isRenaming: false
+    })
+  }
+
+  const handleRenameDocument = async () => {
+    if (!renameDialog.document || !renameDialog.newTitle.trim()) return
+
+    setRenameDialog(prev => ({ ...prev, isRenaming: true }))
+
+    try {
+      const response = await fetch(`/api/documents/${renameDialog.document.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: renameDialog.newTitle.trim()
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to rename document')
+      }
+
+      const updatedDocument = await response.json()
+
+      // Update local state
+      setDocuments(prev => prev.map(doc => 
+        doc.id === updatedDocument.id ? updatedDocument : doc
+      ))
+
+      closeRenameDialog()
+    } catch (error) {
+      console.error('Error renaming document:', error)
+      alert('Failed to rename document. Please try again.')
+    } finally {
+      setRenameDialog(prev => ({ ...prev, isRenaming: false }))
+    }
+  }
+
+  const viewPdf = async (document: Document) => {
+    try {
+      const response = await fetch(`/api/documents/${document.id}/download`)
+      
+      if (!response.ok) {
+        throw new Error('Failed to load document')
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      window.open(url, '_blank')
+    } catch (error) {
+      console.error('Error viewing document:', error)
+      alert('Failed to view document. Please try again.')
+    }
+  }
+
+  // Cancel processing handler
+  const handleCancelProcessing = useCallback(async (documentId: string) => {
+    try {
+      const response = await fetch(`/api/documents/${documentId}/cancel`, {
+        method: 'POST'
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel processing')
+      }
+
+      // Update document status locally
+      setDocuments(prev => prev.map(doc => 
+        doc.id === documentId ? { ...doc, status: 'cancelling' as Document['status'] } : doc
+      ))
+      
+    } catch (error) {
+      console.error('Error cancelling processing:', error)
+      alert('Failed to cancel processing. Please try again.')
+    }
+  }, [])
+
+  const handleRetryProcessing = useCallback(async (document: Document) => {
+    setRetryingDocuments(prev => {
+      const next = new Set(prev)
+      next.add(document.id)
+      return next
+    })
+
+    try {
+      const response = await fetch(`/api/documents/${document.id}/retry`, {
+        method: 'POST'
+      })
+
+      if (!response.ok) {
+        const { error: message } = await response.json().catch(() => ({ error: 'Failed to retry document' }))
+        throw new Error(message || 'Failed to retry document')
+      }
+
+      const { document: updatedDocument } = await response.json() as { document: Document }
+
+      setDocuments(prev => prev.map(doc =>
+        doc.id === updatedDocument.id ? updatedDocument : doc
+      ))
+
+      setDocumentStatuses(prev => {
+        const next = new Map(prev)
+        next.delete(document.id)
+        return next
+      })
+
+    } catch (error) {
+      console.error('Error retrying document processing:', error)
+      const message = error instanceof Error ? error.message : 'Failed to retry processing. Please try again.'
+      alert(message)
+    } finally {
+      setRetryingDocuments(prev => {
+        const next = new Set(prev)
+        next.delete(document.id)
+        return next
+      })
+    }
+  }, [])
+
+  // Enhanced status polling for processing documents
+  useEffect(() => {
+    const trackedStatuses: Document['status'][] = ['uploading', 'queued', 'processing', 'error']
+    const processingDocs = documents.filter(doc => trackedStatuses.includes(doc.status))
+
+    if (processingDocs.length === 0) {
+      // Clear any existing statuses for non-processing documents
+      setDocumentStatuses(new Map())
+      return
+    }
+
+    const pollStatuses = async () => {
+      try {
+        const statusPromises = processingDocs.map(async (doc) => {
+          const response = await fetch(`/api/documents/${doc.id}/processing-status`, {
+            cache: 'no-store'
+          })
+          if (response.ok) {
+            const statusData = await response.json()
+            return { docId: doc.id, status: statusData }
+          }
+          return null
+        })
+
+        const results = await Promise.all(statusPromises)
+
+        // Use functional update to avoid dependency on current documentStatuses
+        setDocumentStatuses(prevStatuses => {
+          const newStatuses = new Map(prevStatuses)
+          
+          results.forEach(result => {
+            if (!result) return
+
+            if (result.status.status === 'error') {
+              newStatuses.delete(result.docId)
+            } else {
+              newStatuses.set(result.docId, result.status)
+            }
+          })
+          
+          // Remove statuses for documents that are no longer processing
+          const processingIds = new Set(processingDocs.map(doc => doc.id))
+          for (const [docId] of newStatuses) {
+            if (!processingIds.has(docId)) {
+              newStatuses.delete(docId)
+            }
+          }
+          
+          return newStatuses
+        })
+
+        // Update local document status when the backend status changes
+        const statusById = new Map<string, DocumentStatus>()
+        results.forEach(result => {
+          if (result?.status) {
+            statusById.set(result.docId, result.status)
+          }
+        })
+
+        let shouldRefresh = false
+
+        setDocuments(prev => prev.map(doc => {
+          const latestStatus = statusById.get(doc.id)
+          if (!latestStatus) {
+            return doc
+          }
+
+          const newStatus = latestStatus.status as Document['status']
+          const sameStatus = newStatus === doc.status
+          const incomingError = latestStatus.error ?? null
+          const existingError = doc.processing_error ?? null
+
+          if (sameStatus && (newStatus !== 'error' || incomingError === existingError)) {
+            return doc
+          }
+
+          if (newStatus === 'completed') {
+            shouldRefresh = true
+          }
+
+          const updatedDoc: Document = { ...doc, status: newStatus }
+
+          if (newStatus === 'error') {
+            const message = incomingError || existingError || 'Document processing failed'
+            updatedDoc.processing_error = message
+          } else if ('processing_error' in updatedDoc) {
+            delete (updatedDoc as any).processing_error
+          }
+
+          return updatedDoc
+        }))
+
+        if (shouldRefresh) {
+          // Pull the latest document metadata (page count, fields, etc.) once the status settles
+          fetchDocuments(false)
+        }
+      } catch (error) {
+        console.error('Error polling document statuses:', error)
+      }
+    }
+
+    // Poll every 3 seconds for processing documents
+    const interval = setInterval(pollStatuses, 3000)
+    pollStatuses() // Initial poll
+
+    return () => clearInterval(interval)
+  }, [documents])
+
+  // Automatically trigger the cron worker when queued documents are detected in development
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') {
+      return
+    }
+
+    const hasQueuedDoc = documents.some(doc => doc.status === 'queued')
+    if (!hasQueuedDoc) {
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastProcessingTrigger < 5000) {
+      return
+    }
+
+    setLastProcessingTrigger(now)
+
+    const triggerProcessing = async () => {
+      try {
+        const response = await fetch('/api/test/process-jobs')
+        if (!response.ok) {
+          console.warn('Manual cron trigger returned non-OK response')
+        }
+      } catch (error) {
+        console.warn('Failed to trigger manual cron processing', error)
+      }
+    }
+
+    triggerProcessing()
+  }, [documents, lastProcessingTrigger])
 
   // Filter helper functions
   const toggleSortOrder = () => {
@@ -110,25 +501,18 @@ export function EnhancedDocumentList() {
            jurisdictionFilter.length > 0
   }
 
-  const handleDropdownFilterChange = (filterType: 'law_firm' | 'fund_manager' | 'fund_admin' | 'jurisdiction', selectedValues: string[]) => {
-    const setterMap = {
-      law_firm: setLawFirmFilter,
-      fund_manager: setFundManagerFilter,
-      fund_admin: setFundAdminFilter,
-      jurisdiction: setJurisdictionFilter
-    }
-
-    const setter = setterMap[filterType]
-    setter(selectedValues)
-  }
-
   // Multi-select helper functions
   const toggleSelectMode = () => {
     setIsSelectMode(!isSelectMode)
     setSelectedDocuments(new Set())
+    setSourceForSelectionId(null) // Reset source doc
   }
 
   const toggleDocumentSelection = (documentId: string) => {
+    // Prevent the source document from being deselected
+    if (documentId === sourceForSelectionId) {
+      return
+    }
     const newSelected = new Set(selectedDocuments)
     if (newSelected.has(documentId)) {
       newSelected.delete(documentId)
@@ -143,12 +527,26 @@ export function EnhancedDocumentList() {
     setSelectedDocuments(allIds)
   }
 
+  const selectAllOnPage = () => {
+    const paginatedIds = paginatedDocuments.map(doc => doc.id)
+    setSelectedDocuments(prev => new Set([...Array.from(prev), ...paginatedIds]))
+  }
+
   const deselectAllDocuments = () => {
-    setSelectedDocuments(new Set())
+    if (sourceForSelectionId) {
+      setSelectedDocuments(new Set([sourceForSelectionId]))
+    } else {
+      setSelectedDocuments(new Set())
+    }
   }
 
   const deleteDocument = async (documentId: string) => {
-    setDeletingDocuments(prev => new Set(prev).add(documentId))
+    setDeleteDialog(prev => {
+      if (prev.document?.id === documentId) {
+        return { ...prev, isDeleting: true }
+      }
+      return prev
+    })
     
     try {
       const response = await fetch(`/api/documents/${documentId}`, {
@@ -175,29 +573,34 @@ export function EnhancedDocumentList() {
       console.error('Error deleting document:', error)
       alert('Failed to delete document. Please try again.')
     } finally {
-      setDeletingDocuments(prev => {
-        const newDeleting = new Set(prev)
-        newDeleting.delete(documentId)
-        return newDeleting
+      setDeleteDialog(prev => {
+        if (prev.document?.id === documentId) {
+          return { document: null, isOpen: false, isDeleting: false }
+        }
+        return prev
       })
     }
   }
 
   const deleteSelectedDocuments = async () => {
     if (selectedDocuments.size === 0) return
-    
-    setShowBulkDeleteDialog(false)
+
+    setBulkDeleteState({ total: selectedDocuments.size, processed: 0, isDeleting: true })
     const documentIds = Array.from(selectedDocuments)
-    
+
     try {
-      // Delete documents one by one
-      await Promise.all(documentIds.map(id => deleteDocument(id)))
-      
-      // Exit select mode
+      for (const id of documentIds) {
+        await deleteDocument(id)
+        setBulkDeleteState(prev => ({ ...prev, processed: prev.processed + 1 }))
+      }
+      setBulkDeleteState(prev => ({ ...prev, isDeleting: false }))
+      setShowBulkDeleteDialog(false)
       setSelectedDocuments(new Set())
       setIsSelectMode(false)
     } catch (error) {
       console.error('Error in bulk delete:', error)
+      setBulkDeleteState(prev => ({ ...prev, isDeleting: false }))
+      setShowBulkDeleteDialog(false)
     }
   }
 
@@ -211,12 +614,12 @@ export function EnhancedDocumentList() {
 
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
-      const link = window.document.createElement('a')
-      link.href = url
-      link.download = document.filename
-      window.document.body.appendChild(link)
-      link.click()
-      window.document.body.removeChild(link)
+      const a = window.document.createElement('a')
+      a.style.display = 'none'
+      a.href = url
+      a.download = document.filename || `${document.title}.pdf`
+      window.document.body.appendChild(a)
+      a.click()
       window.URL.revokeObjectURL(url)
     } catch (error) {
       console.error('Error downloading document:', error)
@@ -224,129 +627,31 @@ export function EnhancedDocumentList() {
     }
   }
 
-  const viewPdf = async (document: Document) => {
-    try {
-      const response = await fetch(`/api/documents/${document.id}/download`)
-      
-      if (!response.ok) {
-        throw new Error('Failed to load document')
-      }
-
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      
-      // Open PDF in a new tab
-      window.open(url, '_blank')
-      
-      // Clean up the URL after a short delay to allow the browser to load it
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url)
-      }, 1000)
-    } catch (error) {
-      console.error('Error viewing document:', error)
-      alert('Failed to open document. Please try again.')
-    }
-  }
-
-  const fetchDocuments = useCallback(async (showLoading = true) => {
-    try {
-      if (showLoading) setIsLoading(true)
-      const response = await fetch('/api/documents')
-      if (!response.ok) {
-        throw new Error('Failed to fetch documents')
-      }
-      const data = await response.json()
-      setDocuments(data)
-      setFilteredDocuments(data)
-      setError('')
-    } catch (err) {
-      setError('Failed to load documents')
-      console.error(err)
-    } finally {
-      if (showLoading) setIsLoading(false)
-    }
-  }, [])
-
-  const fetchDocumentStatus = useCallback(async (documentId: string) => {
-    try {
-      const response = await fetch(`/api/documents/${documentId}/status`)
-      if (!response.ok) {
-        console.error(`Failed to fetch status for document ${documentId}`)
-        return
-      }
-      const statusData = await response.json()
-      
-      if (statusData.detailed_status) {
-        setDocumentStatuses(prev => new Map(prev.set(documentId, statusData.detailed_status)))
-      }
-    } catch (err) {
-      console.error(`Error fetching status for document ${documentId}:`, err)
-    }
-  }, [])
-
-  const fetchAllProcessingStatuses = useCallback(async () => {
-    const processingDocs = documents.filter(doc => 
-      doc.status === 'processing' || doc.status === 'queued'
-    )
-    
-    if (processingDocs.length > 0) {
-      await Promise.all(
-        processingDocs.map(doc => fetchDocumentStatus(doc.id))
-      )
-    }
-  }, [documents, fetchDocumentStatus])
-
+  // Initial load
   useEffect(() => {
     fetchDocuments()
   }, [fetchDocuments])
 
-  // Auto-refresh when there are processing documents
+  // Refresh when trigger changes
   useEffect(() => {
-    const hasProcessingDocs = documents.some(doc => 
-      doc.status === 'processing' || doc.status === 'uploading' || doc.status === 'queued'
-    )
-
-    let interval: NodeJS.Timeout
-
-    if (hasProcessingDocs) {
-      setIsPolling(true)
-      interval = setInterval(async () => {
-        await fetchDocuments(false) // Silent refresh without loading state
-        await fetchAllProcessingStatuses() // Fetch enhanced statuses
-      }, 3000) // Poll every 3 seconds for detailed updates
-
-      console.log('Started polling for processing documents with enhanced status')
-    } else {
-      setIsPolling(false)
-      console.log('No processing documents, stopped polling')
+    if (refreshTrigger > 0) {
+      console.log('📡 Refreshing document list after upload')
+      fetchDocuments(false)
     }
+  }, [refreshTrigger, fetchDocuments])
 
-    return () => {
-      if (interval) {
-        clearInterval(interval)
-      }
-    }
-  }, [documents, fetchDocuments, fetchAllProcessingStatuses])
-
-  // Fetch initial statuses for processing documents
-  useEffect(() => {
-    fetchAllProcessingStatuses()
-  }, [fetchAllProcessingStatuses])
-
-  // Also poll periodically even when no processing docs to catch new uploads
-  useEffect(() => {
-    const backgroundInterval = setInterval(() => {
-      fetchDocuments(false) // Background refresh every 10 seconds
-    }, 10000)
-
-    return () => clearInterval(backgroundInterval)
-  }, [fetchDocuments])
-
+  // Apply filtering, sorting, and search directly
   useEffect(() => {
     let filtered = documents.filter(doc => {
-      const matchesSearch = doc.title.toLowerCase().includes(searchQuery.toLowerCase())
+      // Search query filter
+      const matchesSearch = searchQuery === '' || 
+        doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        doc.filename.toLowerCase().includes(searchQuery.toLowerCase())
       
-      const matchesStatus = statusFilter === 'all' || doc.status === statusFilter
+      // Status filter
+      const matchesStatus = statusFilter === 'all' || 
+        (statusFilter === 'processing' && ['uploading', 'queued', 'processing'].includes(doc.status)) ||
+        doc.status === statusFilter
       
       // Metadata filters
       const matchesLawFirm = lawFirmFilter.length === 0 || 
@@ -365,16 +670,16 @@ export function EnhancedDocumentList() {
              matchesFundManager && matchesFundAdmin && matchesJurisdiction
     })
 
-    // Sort documents
+    // Apply sorting
     filtered = filtered.sort((a, b) => {
       let comparison = 0
       
       switch (sortBy) {
-        case 'name':
-          comparison = a.title.localeCompare(b.title)
-          break
         case 'upload_time':
           comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          break
+        case 'name':
+          comparison = a.title.localeCompare(b.title)
           break
         case 'size':
           comparison = a.file_size - b.file_size
@@ -387,7 +692,19 @@ export function EnhancedDocumentList() {
     })
 
     setFilteredDocuments(filtered)
-  }, [searchQuery, statusFilter, sortBy, sortOrder, documents, lawFirmFilter, fundManagerFilter, fundAdminFilter, jurisdictionFilter])
+    // Reset to first page when filters change
+    setCurrentPage(1)
+  }, [documents, searchQuery, statusFilter, lawFirmFilter, fundManagerFilter, fundAdminFilter, jurisdictionFilter, sortBy, sortOrder])
+
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredDocuments.length / documentsPerPage)
+  const startIndex = (currentPage - 1) * documentsPerPage
+  const endIndex = startIndex + documentsPerPage
+  const paginatedDocuments = filteredDocuments.slice(startIndex, endIndex)
+
+  const goToPage = (page: number) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)))
+  }
 
   const getStatusConfig = (status: Document['status']) => {
     switch (status) {
@@ -430,6 +747,7 @@ export function EnhancedDocumentList() {
     }
   }
 
+  // Helper functions for document display
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -443,16 +761,34 @@ export function EnhancedDocumentList() {
     return pageCount === 1 ? '1 page' : `${pageCount} pages`
   }
 
-  const getDocumentsByStatus = () => {
-    return {
-      all: documents.length,
-      completed: documents.filter(d => d.status === 'completed').length,
-      processing: documents.filter(d => d.status === 'processing' || d.status === 'queued').length,
-      error: documents.filter(d => d.status === 'error').length,
-    }
-  }
+  const statusCounts = useMemo(() => {
+    const filteredByMetadata = documents.filter(doc => {
+      const matchesSearch = searchQuery === '' ||
+        doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        doc.filename.toLowerCase().includes(searchQuery.toLowerCase())
 
-  const statusCounts = getDocumentsByStatus()
+      const matchesLawFirm = lawFirmFilter.length === 0 ||
+        (doc.metadata?.law_firm && lawFirmFilter.includes(doc.metadata.law_firm))
+
+      const matchesFundManager = fundManagerFilter.length === 0 ||
+        (doc.metadata?.fund_manager && fundManagerFilter.includes(doc.metadata.fund_manager))
+
+      const matchesFundAdmin = fundAdminFilter.length === 0 ||
+        (doc.metadata?.fund_admin && fundAdminFilter.includes(doc.metadata.fund_admin))
+
+      const matchesJurisdiction = jurisdictionFilter.length === 0 ||
+        (doc.metadata?.jurisdiction && jurisdictionFilter.includes(doc.metadata.jurisdiction))
+
+      return matchesSearch && matchesLawFirm && matchesFundManager && matchesFundAdmin && matchesJurisdiction
+    })
+
+    return {
+      all: filteredByMetadata.length,
+      completed: filteredByMetadata.filter(d => d.status === 'completed').length,
+      processing: filteredByMetadata.filter(d => ['uploading', 'queued', 'processing'].includes(d.status)).length,
+      error: filteredByMetadata.filter(d => d.status === 'error').length,
+    }
+  }, [documents, searchQuery, lawFirmFilter, fundManagerFilter, fundAdminFilter, jurisdictionFilter])
 
   if (isLoading) {
     return (
@@ -478,12 +814,6 @@ export function EnhancedDocumentList() {
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-3">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Documents</h2>
-          {isPolling && (
-            <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-              <span>Live updates active</span>
-            </div>
-          )}
         </div>
         <div className="flex items-center gap-2">
           {isSelectMode && (
@@ -491,15 +821,67 @@ export function EnhancedDocumentList() {
               <Badge variant="secondary">
                 {selectedDocuments.size} selected
               </Badge>
-              {selectedDocuments.size > 0 && (
-                <AlertDialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+              {sourceForSelectionId && (
+                <Button
+                  size="sm"
+                  variant="default"
+                  disabled={selectedDocuments.size < 2}
+                  onClick={() => {
+                    const ids = Array.from(selectedDocuments)
+                    router.push(`/documents/selected-search?ids=${ids.join(',')}`)
+                  }}
+                >
+                  <Search className="h-4 w-4 mr-2" />
+                  Search Selected ({selectedDocuments.size})
+                </Button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline">
+                    Select All
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onSelect={selectAllOnPage}>
+                    Select All on Page
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={selectAllDocuments}>
+                    Select All Documents
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button size="sm" variant="outline" onClick={deselectAllDocuments}>
+                Deselect All
+              </Button>
+              {selectedDocuments.size > 0 && !sourceForSelectionId && (
+                <AlertDialog open={showBulkDeleteDialog} onOpenChange={(open) => {
+                  if (!open && !bulkDeleteState.isDeleting) {
+                    setShowBulkDeleteDialog(false)
+                  } else {
+                    setShowBulkDeleteDialog(open)
+                  }
+                }}>
                   <AlertDialogTrigger asChild>
-                    <Button size="sm" variant="destructive">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => {
+                        setBulkDeleteState({ total: selectedDocuments.size, processed: 0, isDeleting: false })
+                        setShowBulkDeleteDialog(true)
+                      }}
+                    >
                       <Trash2 className="h-4 w-4 mr-2" />
                       Delete Selected ({selectedDocuments.size})
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent>
+                  <AlertDialogContent
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && !bulkDeleteState.isDeleting) {
+                        event.preventDefault()
+                        deleteSelectedDocuments()
+                      }
+                    }}
+                  >
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete Documents</AlertDialogTitle>
                       <AlertDialogDescription>
@@ -509,20 +891,27 @@ export function EnhancedDocumentList() {
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={deleteSelectedDocuments} className="bg-red-600 hover:bg-red-700">
-                        Delete {selectedDocuments.size} Document{selectedDocuments.size > 1 ? 's' : ''}
-                      </AlertDialogAction>
+                      <AlertDialogCancel disabled={bulkDeleteState.isDeleting}>Cancel</AlertDialogCancel>
+                      <Button
+                        type="button"
+                        onClick={deleteSelectedDocuments}
+                        disabled={bulkDeleteState.isDeleting}
+                        className="bg-red-600 hover:bg-red-700"
+                        autoFocus
+                      >
+                        {bulkDeleteState.isDeleting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Deleting... ({bulkDeleteState.processed}/{bulkDeleteState.total})
+                          </>
+                        ) : (
+                          `Delete ${selectedDocuments.size} Document${selectedDocuments.size > 1 ? 's' : ''}`
+                        )}
+                      </Button>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
               )}
-              <Button size="sm" variant="outline" onClick={selectAllDocuments}>
-                Select All
-              </Button>
-              <Button size="sm" variant="outline" onClick={deselectAllDocuments}>
-                Deselect All
-              </Button>
               <Button size="sm" variant="ghost" onClick={toggleSelectMode}>
                 <X className="h-4 w-4 mr-2" />
                 Cancel
@@ -651,41 +1040,13 @@ export function EnhancedDocumentList() {
                   <Building className="h-3 w-3" />
                   Law Firm
                 </Label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="w-full justify-between text-xs h-8">
-                      {lawFirmFilter.length > 0 ? (
-                        <span>{lawFirmFilter.length} selected</span>
-                      ) : (
-                        <span className="text-gray-500">Select...</span>
-                      )}
-                      <ArrowDown className="h-3 w-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-48">
-                    {LAW_FIRM_OPTIONS.map(option => (
-                      <DropdownMenuItem
-                        key={option.value}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          const newSelection = lawFirmFilter.includes(option.value)
-                            ? lawFirmFilter.filter(item => item !== option.value)
-                            : [...lawFirmFilter, option.value]
-                          setLawFirmFilter(newSelection)
-                        }}
-                        className="flex items-center space-x-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={lawFirmFilter.includes(option.value)}
-                          onChange={() => {}} // Handled by onClick above
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs">{option.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <SearchableMultiSelect
+                  options={[...LAW_FIRM_OPTIONS]}
+                  values={lawFirmFilter}
+                  onValuesChange={setLawFirmFilter}
+                  placeholder="Select law firms..."
+                  searchPlaceholder="Search law firms..."
+                />
               </div>
 
               {/* Fund Manager Filter */}
@@ -694,41 +1055,13 @@ export function EnhancedDocumentList() {
                   <Users className="h-3 w-3" />
                   Fund Manager
                 </Label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="w-full justify-between text-xs h-8">
-                      {fundManagerFilter.length > 0 ? (
-                        <span>{fundManagerFilter.length} selected</span>
-                      ) : (
-                        <span className="text-gray-500">Select...</span>
-                      )}
-                      <ArrowDown className="h-3 w-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-48">
-                    {FUND_MANAGER_OPTIONS.map(option => (
-                      <DropdownMenuItem
-                        key={option.value}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          const newSelection = fundManagerFilter.includes(option.value)
-                            ? fundManagerFilter.filter(item => item !== option.value)
-                            : [...fundManagerFilter, option.value]
-                          setFundManagerFilter(newSelection)
-                        }}
-                        className="flex items-center space-x-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={fundManagerFilter.includes(option.value)}
-                          onChange={() => {}} // Handled by onClick above
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs">{option.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <SearchableMultiSelect
+                  options={[...FUND_MANAGER_OPTIONS]}
+                  values={fundManagerFilter}
+                  onValuesChange={setFundManagerFilter}
+                  placeholder="Select fund managers..."
+                  searchPlaceholder="Search fund managers..."
+                />
               </div>
 
               {/* Fund Admin Filter */}
@@ -737,41 +1070,13 @@ export function EnhancedDocumentList() {
                   <Briefcase className="h-3 w-3" />
                   Fund Admin
                 </Label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="w-full justify-between text-xs h-8">
-                      {fundAdminFilter.length > 0 ? (
-                        <span>{fundAdminFilter.length} selected</span>
-                      ) : (
-                        <span className="text-gray-500">Select...</span>
-                      )}
-                      <ArrowDown className="h-3 w-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-48">
-                    {FUND_ADMIN_OPTIONS.map(option => (
-                      <DropdownMenuItem
-                        key={option.value}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          const newSelection = fundAdminFilter.includes(option.value)
-                            ? fundAdminFilter.filter(item => item !== option.value)
-                            : [...fundAdminFilter, option.value]
-                          setFundAdminFilter(newSelection)
-                        }}
-                        className="flex items-center space-x-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={fundAdminFilter.includes(option.value)}
-                          onChange={() => {}} // Handled by onClick above
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs">{option.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <SearchableMultiSelect
+                  options={[...FUND_ADMIN_OPTIONS]}
+                  values={fundAdminFilter}
+                  onValuesChange={setFundAdminFilter}
+                  placeholder="Select fund admins..."
+                  searchPlaceholder="Search fund admins..."
+                />
               </div>
 
               {/* Jurisdiction Filter */}
@@ -780,383 +1085,409 @@ export function EnhancedDocumentList() {
                   <Globe className="h-3 w-3" />
                   Jurisdiction
                 </Label>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="w-full justify-between text-xs h-8">
-                      {jurisdictionFilter.length > 0 ? (
-                        <span>{jurisdictionFilter.length} selected</span>
-                      ) : (
-                        <span className="text-gray-500">Select...</span>
-                      )}
-                      <ArrowDown className="h-3 w-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-48">
-                    {JURISDICTION_OPTIONS.map(option => (
-                      <DropdownMenuItem
-                        key={option.value}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          const newSelection = jurisdictionFilter.includes(option.value)
-                            ? jurisdictionFilter.filter(item => item !== option.value)
-                            : [...jurisdictionFilter, option.value]
-                          setJurisdictionFilter(newSelection)
-                        }}
-                        className="flex items-center space-x-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={jurisdictionFilter.includes(option.value)}
-                          onChange={() => {}} // Handled by onClick above
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs">{option.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <SearchableMultiSelect
+                  options={[...JURISDICTION_OPTIONS]}
+                  values={jurisdictionFilter}
+                  onValuesChange={setJurisdictionFilter}
+                  placeholder="Select jurisdictions..."
+                  searchPlaceholder="Search jurisdictions..."
+                />
               </div>
             </div>
           </div>
         )}
 
-        <TabsContent value={statusFilter} className="space-y-4">
+        <TabsContent value={statusFilter}>
           {error && (
-            <Card className="border-red-200 dark:border-red-800">
-              <CardContent className="flex items-center justify-center p-8">
-                <AlertCircle className="h-8 w-8 text-red-500 mr-3" />
-                <span className="text-red-700 dark:text-red-400">{error}</span>
+            <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                  <p className="text-red-800 dark:text-red-200">{error}</p>
+                </div>
               </CardContent>
             </Card>
           )}
 
-          {filteredDocuments.length === 0 && !error && (
+          {filteredDocuments.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center p-12">
-                <FileText className="h-16 w-16 text-gray-300 dark:text-gray-600 mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                  {searchQuery || statusFilter !== 'all' ? 'No documents found' : 'No documents yet'}
+                <FileText className="h-12 w-12 text-gray-400 mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                  {searchQuery || hasActiveFilters() ? 'No matching documents' : 'No documents yet'}
                 </h3>
-                <p className="text-gray-500 dark:text-gray-400 text-center max-w-sm">
-                  {searchQuery || statusFilter !== 'all'
-                    ? 'Try adjusting your search terms or filters'
-                    : 'Upload your first PDF document to get started with AI-powered analysis'
-                  }
+                <p className="text-gray-600 dark:text-gray-400 text-center">
+                  {searchQuery || hasActiveFilters()
+                    ? 'Try adjusting your search or filter criteria.'
+                    : 'Upload your first document to get started.'}
                 </p>
               </CardContent>
             </Card>
-          )}
+          ) : (
+            <div>
+              {/* Simple Document List - showing paginated documents */}
+              <div className="space-y-3">
+                {paginatedDocuments.map((document) => {
+                  const statusConfig = getStatusConfig(document.status)
+                  const StatusIcon = statusConfig.icon
 
-          {/* Document Grid */}
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {filteredDocuments.map((document) => {
-              const statusConfig = getStatusConfig(document.status)
-              const StatusIcon = statusConfig.icon
-              
-              return (
-                <Card key={document.id} className={`group hover:shadow-lg transition-all duration-200 hover:-translate-y-1 card-enhanced ${
-                  isSelectMode && selectedDocuments.has(document.id) ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-950/20' : ''
-                }`} role="article" aria-labelledby={`document-title-${document.id}`}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="p-2 bg-blue-50 dark:bg-gradient-to-br dark:from-blue-900/60 dark:to-blue-800/40 rounded-lg border dark:border-blue-700/30" aria-hidden="true">
-                            <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <CardTitle id={`document-title-${document.id}`} className="text-base font-semibold truncate">
-                              {document.title}
-                            </CardTitle>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isSelectMode && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleDocumentSelection(document.id)}
-                            className="p-1 h-auto"
-                            aria-label={`${selectedDocuments.has(document.id) ? 'Deselect' : 'Select'} ${document.title}`}
-                          >
-                            {selectedDocuments.has(document.id) ? (
-                              <CheckSquare className="h-5 w-5 text-blue-600" />
-                            ) : (
-                              <Square className="h-5 w-5 text-gray-400" />
-                            )}
-                          </Button>
-                        )}
-                        <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="opacity-0 group-hover:opacity-100 transition-opacity"
-                            aria-label={`More options for ${document.title}`}
-                          >
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem 
-                            onClick={() => downloadPdf(document)}
-                            className="flex items-center"
-                          >
-                            <Download className="h-4 w-4 mr-2" />
-                            Download PDF
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem 
-                            onClick={toggleSelectMode}
-                            className="flex items-center"
-                          >
-                            <CheckSquare className="h-4 w-4 mr-2" />
-                            Select Documents
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => setEditingDocument(document)}
-                            className="flex items-center"
-                          >
-                            <Edit className="h-4 w-4 mr-2" />
-                            Edit Details
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <DropdownMenuItem 
-                                className="flex items-center text-red-600 dark:text-red-400"
-                                onSelect={(e) => e.preventDefault()}
+                  return (
+                    <Card 
+                      key={document.id} 
+                      className={`group hover:shadow-md transition-all duration-200 ${
+                        isSelectMode && selectedDocuments.has(document.id) ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-950/20' : ''
+                      } ${
+                        selectedSearchSourceDocument?.id === document.id ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-950/20' : ''
+                      }`} 
+                      role="article" 
+                      aria-labelledby={`document-title-${document.id}`}
+                      data-testid="document-item"
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-4">
+                          {/* Document Icon and Selection */}
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            {isSelectMode && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => toggleDocumentSelection(document.id)}
+                                className="p-1 h-auto"
+                                aria-label={`${selectedDocuments.has(document.id) ? 'Deselect' : 'Select'} ${document.title}`}
                               >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Delete Document</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Are you sure you want to delete &quot;{document.title}&quot;? 
-                                  This action cannot be undone and will permanently remove the document 
-                                  from your account.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction 
-                                  onClick={() => deleteDocument(document.id)} 
-                                  className="bg-red-600 hover:bg-red-700"
-                                  disabled={deletingDocuments.has(document.id)}
-                                >
-                                  {deletingDocuments.has(document.id) ? 'Deleting...' : 'Delete Document'}
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="space-y-4">
-                    {/* Enhanced Status Display */}
-                    {(() => {
-                      const enhancedStatus = documentStatuses.get(document.id)
-                      const isProcessing = document.status === 'processing' || document.status === 'queued'
-                      
-                      return (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <Badge className={`${statusConfig.color} flex items-center gap-1`}>
-                              <StatusIcon className="h-3 w-3" />
-                              {enhancedStatus?.phase || statusConfig.label}
-                            </Badge>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 text-right">
-                              <div>{formatFileSize(document.file_size)}</div>
-                              {formatPageCount(document.page_count) && (
-                                <div className="text-gray-400 dark:text-gray-500">
-                                  {formatPageCount(document.page_count)}
-                                </div>
-                              )}
+                                {selectedDocuments.has(document.id) ? (
+                                  <CheckSquare className="h-5 w-5 text-blue-600" />
+                                ) : (
+                                  <Square className="h-5 w-5 text-gray-400" />
+                                )}
+                              </Button>
+                            )}
+                            {isSelectMode && sourceForSelectionId === document.id && (
+                              <div className="flex items-center gap-1 pl-1">
+                                <Target className="h-4 w-4 text-purple-600" />
+                                <span className="text-xs font-medium text-purple-600">Source</span>
+                              </div>
+                            )}
+                            <div className="p-2 bg-blue-50 dark:bg-gradient-to-br dark:from-blue-900/60 dark:to-blue-800/40 rounded-lg border dark:border-blue-700/30" aria-hidden="true">
+                              <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                             </div>
                           </div>
-                          
-                          {/* Enhanced Status Message for Processing Documents */}
-                          {isProcessing && enhancedStatus && (
-                            <div className="space-y-2">
-                              <div className="text-xs text-gray-600 dark:text-gray-400">
-                                {enhancedStatus.message}
-                              </div>
-                              
-                              {/* Progress Bar - Visual indicator */}
-                              {(() => {
-                                const getProgressFromPhase = (phase: string, method: string) => {
-                                  if (method === 'batch') {
-                                    switch (phase) {
-                                      case 'Preparing Batch': return 20
-                                      case 'Batch Processing': return 60
-                                      default: return 10
-                                    }
-                                  } else {
-                                    switch (phase) {
-                                      case 'Starting': return 15
-                                      case 'Analyzing Document': return 40
-                                      case 'Extracting Data': return 70
-                                      case 'Generating Embeddings': return 90
-                                      default: return 30
-                                    }
-                                  }
-                                }
-                                
-                                const progress = getProgressFromPhase(enhancedStatus.phase, enhancedStatus.processingMethod)
-                                
-                                return (
-                                  <div className="space-y-1">
-                                    <div className="flex items-center justify-between text-xs">
-                                      <span className="text-gray-500 dark:text-gray-400">
-                                        Progress
-                                      </span>
-                                      <span className="text-gray-600 dark:text-gray-400 font-medium">
-                                        {progress}%
-                                      </span>
+
+                          {/* Main Content */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between">
+                              {/* Document Info */}
+                              <div className="min-w-0 flex-1 space-y-2">
+                                {/* Title and Status Row */}
+                                <div className="flex items-center gap-3">
+                                  <h3 id={`document-title-${document.id}`} className="text-base font-semibold truncate text-gray-900 dark:text-white">
+                                    {document.title}
+                                  </h3>
+                                  <Badge 
+                                    className={`${statusConfig.color} flex items-center gap-1 flex-shrink-0`}
+                                    data-testid="document-status"
+                                  >
+                                    <StatusIcon className="h-3 w-3" />
+                                  {document.status === 'processing'
+                                    ? documentStatuses.get(document.id)?.phase || statusConfig.label
+                                    : statusConfig.label}
+                                  </Badge>
+                                </div>
+
+                                {/* Metadata Row */}
+                                <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                                  <div className="flex items-center gap-1">
+                                    <Calendar className="h-3 w-3" />
+                                    {format(new Date(document.created_at), 'dd MMM yyyy - HH:mm')}
+                                  </div>
+                                  <div>{formatFileSize(document.file_size)}</div>
+                                  {formatPageCount(document.page_count) && <div>{formatPageCount(document.page_count)}</div>}
+                                </div>
+
+                                {/* Document Metadata Row */}
+                                {(document.metadata?.law_firm || document.metadata?.fund_manager || document.metadata?.fund_admin || document.metadata?.jurisdiction) && (
+                                  <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+                                    {document.metadata?.law_firm && (
+                                      <div className="flex items-center gap-1">
+                                        <Building className="h-3 w-3" />
+                                        {LAW_FIRM_OPTIONS.find(opt => opt.value === document.metadata?.law_firm as any)?.label || String(document.metadata?.law_firm)}
+                                      </div>
+                                    )}
+                                    {document.metadata?.fund_manager && (
+                                      <div className="flex items-center gap-1">
+                                        <Users className="h-3 w-3" />
+                                        {FUND_MANAGER_OPTIONS.find(opt => opt.value === document.metadata?.fund_manager as any)?.label || String(document.metadata?.fund_manager)}
+                                      </div>
+                                    )}
+                                    {document.metadata?.fund_admin && (
+                                      <div className="flex items-center gap-1">
+                                        <Briefcase className="h-3 w-3" />
+                                        {FUND_ADMIN_OPTIONS.find(opt => opt.value === document.metadata?.fund_admin as any)?.label || String(document.metadata?.fund_admin)}
+                                      </div>
+                                    )}
+                                    {document.metadata?.jurisdiction && (
+                                      <div className="flex items-center gap-1">
+                                        <Globe className="h-3 w-3" />
+                                        {JURISDICTION_OPTIONS.find(opt => opt.value === document.metadata?.jurisdiction as any)?.label || String(document.metadata?.jurisdiction)}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Enhanced Processing Status */}
+                                {document.status === 'processing' && documentStatuses.get(document.id) && (
+                                  <div className="space-y-2">
+                                    <div className="text-xs text-gray-600 dark:text-gray-400">
+                                      {documentStatuses.get(document.id)?.message}
                                     </div>
-                                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                                      <div 
-                                        className={`h-1.5 rounded-full transition-all duration-500 ${
-                                          enhancedStatus.processingMethod === 'batch' 
-                                            ? 'bg-purple-500 dark:bg-purple-400' 
-                                            : 'bg-blue-500 dark:bg-blue-400'
-                                        }`}
-                                        style={{ width: `${progress}%` }}
-                                      />
+                                    {documentStatuses.get(document.id)?.estimatedTimeRemaining && (
+                                      <div className="text-xs text-blue-600 dark:text-blue-400">
+                                        {documentStatuses.get(document.id)?.estimatedTimeRemaining}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {document.status !== 'processing' && document.status !== 'completed' && (
+                                  <div className="space-y-2">
+                                    <div className="text-xs text-gray-600 dark:text-gray-400">
+                                      {document.status === 'error'
+                                        ? document.processing_error || 'Document processing failed'
+                                        : statusConfig.label}
                                     </div>
                                   </div>
-                                )
-                              })()}
-                              
-                              {enhancedStatus.estimatedTimeRemaining && (
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="text-gray-500 dark:text-gray-400">
-                                    Est. time remaining:
-                                  </span>
-                                  <span className={`font-medium ${enhancedStatus.isStale ? 'text-orange-600 dark:text-orange-400' : 'text-blue-600 dark:text-blue-400'}`}>
-                                    {enhancedStatus.estimatedTimeRemaining}
-                                  </span>
-                                </div>
-                              )}
-                              
-                              {enhancedStatus.processingMethod === 'batch' && (
-                                <div className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400">
-                                  <Clock className="h-3 w-3" />
-                                  <span>Batch processing (large document)</span>
-                                </div>
-                              )}
-                              
-                              {enhancedStatus.isStale && (
-                                <div className="flex items-center gap-1 text-xs text-orange-600 dark:text-orange-400">
-                                  <AlertCircle className="h-3 w-3" />
-                                  <span>Status checking...</span>
-                                </div>
-                              )}
+                                )}
+
+                                {/* Error Message */}
+                                {document.processing_error && (
+                                  <div className="p-2 bg-red-50 dark:bg-red-950/50 rounded text-xs text-red-700 dark:text-red-400">
+                                    {document.processing_error}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {/* Primary Action Buttons */}
+                                {document.status === 'completed' && (
+                                  <>
+                                    <Button 
+                                      size="sm" 
+                                      variant="outline"
+                                      onClick={() => viewPdf(document)}
+                                    >
+                                      <Eye className="h-3 w-3 mr-1" />
+                                      View
+                                    </Button>
+                                    {!document.metadata?.embeddings_skipped && (
+                                      <Button 
+                                        size="sm"
+                                        onClick={() => handleSetSearchModeDocument(document)}
+                                      >
+                                        <Sparkles className="h-3 w-3 mr-1" />
+                                        Search Similar
+                                      </Button>
+                                    )}
+                                  </>
+                                )}
+
+                                {document.status === 'error' && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleRetryProcessing(document)}
+                                    disabled={retryingDocuments.has(document.id)}
+                                    className="min-w-[96px]"
+                                  >
+                                    {retryingDocuments.has(document.id) ? (
+                                      <>
+                                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                        Retrying...
+                                      </>
+                                    ) : (
+                                      'Retry Processing'
+                                    )}
+                                  </Button>
+                                )}
+
+                                {/* More Options Menu */}
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button 
+                                          variant="ghost"
+                                          size="sm"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                      aria-label={`More options for ${document.title}`}
+                                    >
+                                      <MoreVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem 
+                                      onClick={() => downloadPdf(document)}
+                                      className="flex items-center"
+                                    >
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Download PDF
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={toggleSelectMode}
+                                      className="flex items-center"
+                                    >
+                                      <CheckSquare className="h-4 w-4 mr-2" />
+                                      Select Documents
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem 
+                                      onClick={() => setEditingDocument(document)}
+                                      className="flex items-center"
+                                    >
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Edit Details
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem 
+                                      onClick={() => openRenameDialog(document)}
+                                      className="flex items-center"
+                                    >
+                                      <Edit2 className="h-4 w-4 mr-2" />
+                                      Rename Document
+                                    </DropdownMenuItem>
+                                    
+                                    {/* Cancel Processing Option */}
+                                    {['queued', 'processing'].includes(document.status) && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <AlertDialog>
+                                          <AlertDialogTrigger asChild>
+                                            <DropdownMenuItem 
+                                              className="flex items-center text-orange-600 dark:text-orange-400"
+                                              onSelect={(e) => e.preventDefault()}
+                                            >
+                                              <X className="h-4 w-4 mr-2" />
+                                              Cancel Processing
+                                            </DropdownMenuItem>
+                                          </AlertDialogTrigger>
+                                          <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                              <AlertDialogTitle>Cancel Processing</AlertDialogTitle>
+                                              <AlertDialogDescription>
+                                                Are you sure you want to cancel processing for &quot;{document.title}&quot;?
+                                              </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                              <AlertDialogCancel>Keep Processing</AlertDialogCancel>
+                                              <AlertDialogAction 
+                                                onClick={() => handleCancelProcessing(document.id)} 
+                                                className="bg-orange-600 hover:bg-orange-700"
+                                              >
+                                                Cancel Processing
+                                              </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                          </AlertDialogContent>
+                                        </AlertDialog>
+                                      </>
+                                    )}
+                                    
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="flex items-center text-red-600 dark:text-red-400"
+                                      onSelect={() => {
+                                        setDeleteDialog({ document, isOpen: true, isDeleting: false })
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </div>
-                          )}
+                          </div>
                         </div>
-                      )
-                    })()}
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
 
-                    {/* Metadata Tags */}
-                    {document.metadata && (
-                      <div className="space-y-2">
-                        {/* Legacy metadata */}
-                        {(document.metadata.investor_type || document.metadata.document_type) && (
-                          <div className="flex gap-2 flex-wrap">
-                            {document.metadata.investor_type && (
-                              <Badge variant="outline" className="text-xs">
-                                {document.metadata.investor_type}
-                              </Badge>
-                            )}
-                            {document.metadata.document_type && (
-                              <Badge variant="outline" className="text-xs">
-                                {document.metadata.document_type}
-                              </Badge>
-                            )}
-                          </div>
-                        )}
+              {/* Pagination Controls */}
+              {filteredDocuments.length > documentsPerPage && (
+                <div className="flex items-center justify-between mt-6 pt-4 border-t">
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    Showing {startIndex + 1} to {Math.min(endIndex, filteredDocuments.length)} of {filteredDocuments.length} documents
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => goToPage(1)}
+                      disabled={currentPage === 1}
+                      className="w-8 h-8 p-0"
+                    >
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => goToPage(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="w-8 h-8 p-0"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum;
+                        if (totalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          pageNum = currentPage - 2 + i;
+                        }
                         
-                        {/* Business metadata */}
-                        {(document.metadata.law_firm || document.metadata.fund_manager || 
-                          document.metadata.fund_admin || document.metadata.jurisdiction) && (
-                          <div className="grid grid-cols-2 gap-1 text-xs text-gray-600 dark:text-gray-400">
-                            {document.metadata.law_firm && (
-                              <div className="flex items-center gap-1">
-                                <Building className="h-3 w-3" />
-                                <span className="truncate">{document.metadata.law_firm}</span>
-                              </div>
-                            )}
-                            {document.metadata.fund_manager && (
-                              <div className="flex items-center gap-1">
-                                <Users className="h-3 w-3" />
-                                <span className="truncate">{document.metadata.fund_manager}</span>
-                              </div>
-                            )}
-                            {document.metadata.fund_admin && (
-                              <div className="flex items-center gap-1">
-                                <Briefcase className="h-3 w-3" />
-                                <span className="truncate">{document.metadata.fund_admin}</span>
-                              </div>
-                            )}
-                            {document.metadata.jurisdiction && (
-                              <div className="flex items-center gap-1">
-                                <Globe className="h-3 w-3" />
-                                <span className="truncate">{document.metadata.jurisdiction}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Date */}
-                    <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
-                      <Calendar className="h-3 w-3 mr-1" />
-                      {formatDistanceToNow(new Date(document.created_at), { addSuffix: true })}
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={currentPage === pageNum ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => goToPage(pageNum)}
+                            className="w-8 h-8 p-0"
+                          >
+                            {pageNum}
+                          </Button>
+                        );
+                      })}
                     </div>
-
-                    {/* Error Message */}
-                    {document.processing_error && (
-                      <div className="p-2 bg-red-50 dark:bg-red-950/50 rounded text-xs text-red-700 dark:text-red-400">
-                        {document.processing_error}
-                      </div>
-                    )}
-
-                    {/* Action Buttons */}
-                    <div className="flex gap-2 pt-2">
-                      {document.status === 'completed' && (
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => viewPdf(document)}
-                          className="flex-1"
-                        >
-                          <Eye className="h-3 w-3 mr-1" />
-                          View PDF
-                        </Button>
-                      )}
-                      {document.status === 'completed' && !document.metadata?.embeddings_skipped && (
-                        <Button asChild size="sm" className="flex-1">
-                          <Link href={`/documents/${document.id}/similar`}>
-                            <Sparkles className="h-3 w-3 mr-1" />
-                            Find Similar
-                          </Link>
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => goToPage(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      className="w-8 h-8 p-0"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => goToPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="w-8 h-8 p-0"
+                    >
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -1167,6 +1498,128 @@ export function EnhancedDocumentList() {
         onClose={() => setEditingDocument(null)}
         onSuccess={handleDocumentUpdate}
       />
+
+      {/* Search Mode Modal */}
+      <SearchModeModal
+        isOpen={searchModeModal.isOpen}
+        onClose={closeSearchModeModal}
+        documentId={searchModeModal.document?.id || ''}
+        documentTitle={searchModeModal.document?.title || ''}
+        onSelectedSearchClick={handleSelectedSearchClick}
+      />
+
+      {/* Rename Document Dialog */}
+      <AlertDialog
+        open={renameDialog.isOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            if (renameDialog.isRenaming) {
+              return
+            }
+            closeRenameDialog()
+          }
+        }}
+      >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Rename Document</AlertDialogTitle>
+            <AlertDialogDescription>
+              Enter a new name for &quot;{renameDialog.document?.title}&quot;
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            <Input
+              value={renameDialog.newTitle}
+              onChange={(e) => setRenameDialog(prev => ({ ...prev, newTitle: e.target.value }))}
+              placeholder="Document title"
+              disabled={renameDialog.isRenaming}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !renameDialog.isRenaming && renameDialog.newTitle.trim()) {
+                  handleRenameDocument()
+                }
+              }}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={renameDialog.isRenaming}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              asChild
+              disabled={renameDialog.isRenaming || !renameDialog.newTitle.trim()}
+            >
+              <Button
+                type="button"
+                onClick={handleRenameDocument}
+                disabled={renameDialog.isRenaming || !renameDialog.newTitle.trim()}
+                className="min-w-[140px]"
+              >
+                {renameDialog.isRenaming ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Renaming...
+                  </>
+                ) : (
+                  'Rename Document'
+                )}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Document Dialog */}
+      <AlertDialog
+        open={deleteDialog.isOpen}
+        onOpenChange={open => {
+          if (!open) {
+            if (deleteDialog.isDeleting) {
+              return
+            }
+            setDeleteDialog({ document: null, isOpen: false, isDeleting: false })
+          }
+        }}
+      >
+        <AlertDialogContent
+          onKeyDown={event => {
+            if (event.key === 'Enter' && !deleteDialog.isDeleting && deleteDialog.document) {
+              event.preventDefault()
+              deleteDocument(deleteDialog.document.id)
+            }
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Document</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteDialog.document
+                ? `Are you sure you want to delete "${deleteDialog.document.title}"? This action cannot be undone.`
+                : 'Are you sure you want to delete this document? This action cannot be undone.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteDialog.isDeleting}>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!deleteDialog.document || deleteDialog.isDeleting) return
+                deleteDocument(deleteDialog.document.id)
+              }}
+              disabled={deleteDialog.isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+              autoFocus
+            >
+              {deleteDialog.isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Document'
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
+
+export default EnhancedDocumentList

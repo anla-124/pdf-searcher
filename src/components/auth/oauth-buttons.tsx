@@ -33,6 +33,7 @@ export function GoogleAuthButton() {
       onClick={handleGoogleLogin}
       disabled={isLoading}
       className="w-full"
+      data-testid="login-button"
     >
       <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
         <path

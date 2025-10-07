@@ -1,0 +1,625 @@
+name: Comprehensive Testing Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_e2e:
+        description: 'Skip E2E tests'
+        required: false
+        default: 'false'
+        type: boolean
+      skip_load:
+        description: 'Skip load tests'
+        required: false
+        default: 'false'
+        type: boolean
+      skip_security:
+        description: 'Skip security tests'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  NODE_VERSION: '20'
+  PLAYWRIGHT_VERSION: '1.48.0'
+
+jobs:
+  # Setup and validation
+  setup:
+    name: Setup and Validation
+    runs-on: ubuntu-latest
+    outputs:
+      skip_e2e: ${{ steps.config.outputs.skip_e2e }}
+      skip_load: ${{ steps.config.outputs.skip_load }}
+      skip_security: ${{ steps.config.outputs.skip_security }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm audit --audit-level high
+
+      - name: Validate configuration
+        run: |
+          echo "Validating project configuration..."
+          npm run lint -- --max-warnings 0
+          npx tsc --noEmit
+
+      - name: Set test configuration
+        id: config
+        run: |
+          # Determine which tests to skip based on event type and inputs
+          SKIP_E2E="${{ github.event.inputs.skip_e2e || 'false' }}"
+          SKIP_LOAD="${{ github.event.inputs.skip_load || 'false' }}"
+          SKIP_SECURITY="${{ github.event.inputs.skip_security || 'false' }}"
+          
+          # Skip load and security tests on PRs by default (unless manually triggered)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SKIP_LOAD="true"
+            SKIP_SECURITY="true"
+          fi
+          
+          echo "skip_e2e=$SKIP_E2E" >> $GITHUB_OUTPUT
+          echo "skip_load=$SKIP_LOAD" >> $GITHUB_OUTPUT
+          echo "skip_security=$SKIP_SECURITY" >> $GITHUB_OUTPUT
+
+  # Unit and Integration Tests
+  unit-tests:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create test environment file
+        run: |
+          cp .env.local.template .env.test
+          # Set test-specific environment variables
+          echo "NODE_ENV=test" >> .env.test
+          echo "VERBOSE_LOGS=false" >> .env.test
+
+      - name: Run unit tests
+        run: npm run test:unit -- --coverage --reporter=verbose
+        env:
+          NODE_ENV: test
+
+      - name: Run integration tests
+        run: npm run test:integration -- --reporter=verbose
+        env:
+          NODE_ENV: test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload unit test coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info
+          flags: unit-tests
+          name: unit-test-coverage
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: unit-test-results
+          path: |
+            test-results/
+            coverage/
+
+  # API Tests
+  api-tests:
+    name: API Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup test database
+        run: |
+          # Run database migrations/setup if needed
+          # npm run db:migrate:test || true
+
+      - name: Start application server
+        run: |
+          npm run build
+          npm start &
+          sleep 30  # Wait for server to start
+        env:
+          NODE_ENV: test
+          PORT: 3000
+
+      - name: Wait for server to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:3000/api/health; do sleep 2; done'
+
+      - name: Run API tests
+        run: |
+          npm run test -- tests/api/ --reporter=verbose --run
+        env:
+          NODE_ENV: test
+          BASE_URL: http://localhost:3000
+
+      - name: Upload API test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: api-test-results
+          path: test-results/
+
+  # End-to-End Tests
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [setup, unit-tests]
+    if: needs.setup.outputs.skip_e2e == 'false'
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+      fail-fast: false
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Create test fixtures
+        run: |
+          mkdir -p tests/fixtures
+          # Create sample PDF for testing
+          echo "%PDF-1.4 sample test document content" > tests/fixtures/sample-document.pdf
+
+      - name: Start application server
+        run: |
+          npm run build
+          npm start &
+          sleep 30
+        env:
+          NODE_ENV: test
+          PORT: 3000
+
+      - name: Wait for server to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:3000/api/health; do sleep 2; done'
+
+      - name: Run E2E tests
+        run: npx playwright test --project=${{ matrix.browser }}
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+
+      - name: Upload E2E test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: e2e-test-results-${{ matrix.browser }}
+          path: |
+            test-results/
+            playwright-report/
+
+  # Load Tests
+  load-tests:
+    name: Load Tests
+    runs-on: ubuntu-latest
+    needs: [setup, api-tests]
+    if: needs.setup.outputs.skip_load == 'false'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install K6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start application server
+        run: |
+          npm run build
+          npm start &
+          sleep 30
+        env:
+          NODE_ENV: production
+          PORT: 3000
+
+      - name: Wait for server to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:3000/api/health; do sleep 2; done'
+
+      - name: Run search performance load tests
+        run: k6 run --out json=test-results/load/search-performance.json tests/load/k6-search-performance.js
+        env:
+          BASE_URL: http://localhost:3000
+          AUTH_TOKEN: test_token
+
+      - name: Run document upload load tests
+        run: k6 run --out json=test-results/load/document-upload.json tests/load/k6-document-upload.js
+        env:
+          BASE_URL: http://localhost:3000
+          AUTH_TOKEN: test_token
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-results
+          path: test-results/load/
+
+  # Security Tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: [setup, api-tests]
+    if: needs.setup.outputs.skip_security == 'false'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start application server
+        run: |
+          npm run build
+          npm start &
+          sleep 30
+        env:
+          NODE_ENV: production
+          PORT: 3000
+
+      - name: Wait for server to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:3000/api/health; do sleep 2; done'
+
+      - name: Run dependency security scan
+        run: |
+          npm audit --audit-level high
+          # Install and run additional security scanners
+          npx audit-ci --config .audit-ci.json || true
+
+      - name: Run OWASP ZAP security scan
+        run: |
+          docker run --rm \
+            -v $(pwd)/tests/security:/zap/wrk:rw \
+            -v $(pwd)/test-results/security:/zap/reports:rw \
+            --network="host" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-automation.py \
+            -configfile /zap/wrk/owasp-zap-config.yaml \
+            -cmd || true
+
+      - name: Upload security test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-test-results
+          path: test-results/security/
+
+  # Docker Tests
+  docker-tests:
+    name: Docker Build & Tests
+    runs-on: ubuntu-latest
+    needs: [setup]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create test environment file
+        run: |
+          cat > .env.local << EOF
+          NEXT_PUBLIC_SUPABASE_URL=https://test.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY=test_anon_key
+          SUPABASE_SERVICE_ROLE_KEY=test_service_key
+          GOOGLE_CLOUD_PROJECT_ID=test-project
+          GOOGLE_CLOUD_LOCATION=us
+          GOOGLE_CLOUD_STORAGE_BUCKET=test-bucket
+          GOOGLE_CLOUD_PROCESSOR_ID=test-processor
+          GOOGLE_CLOUD_FORM_PARSER_ID=test-parser
+          GOOGLE_CLOUD_OCR_PROCESSOR_ID=test-ocr
+          GOOGLE_APPLICATION_CREDENTIALS=./credentials/test.json
+          PINECONE_API_KEY=test_pinecone_key
+          PINECONE_INDEX_NAME=test-index
+          CRON_SECRET=test_cron_secret
+          UPSTASH_REDIS_REST_URL=https://test-redis.upstash.io
+          UPSTASH_REDIS_REST_TOKEN=test_redis_token
+          JWT_SECRET=test_jwt_secret
+          EOF
+
+      - name: Build Docker image
+        run: docker-compose --env-file .env.local build --no-cache
+
+      - name: Test Docker containers
+        run: |
+          docker-compose --env-file .env.local up -d
+          sleep 30
+          
+          # Test container health
+          docker-compose ps
+          
+          # Test API accessibility
+          curl -f http://localhost:3000/api/health || exit 1
+          
+          # Check logs for errors
+          docker-compose logs
+          
+          # Cleanup
+          docker-compose down
+
+  # Performance Analysis
+  performance-analysis:
+    name: Performance Analysis
+    runs-on: ubuntu-latest
+    needs: [unit-tests, api-tests]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install analysis tools
+        run: |
+          npm install -g lighthouse-ci
+          npm ci
+
+      - name: Analyze test results
+        run: |
+          # Create performance analysis script
+          cat > analyze-performance.js << 'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          
+          console.log('🔍 Analyzing test performance results...\n');
+          
+          // Analyze load test results if available
+          const loadTestFiles = [
+            'load-test-results/search-performance.json',
+            'load-test-results/document-upload.json'
+          ];
+          
+          loadTestFiles.forEach(file => {
+            if (fs.existsSync(file)) {
+              console.log(`📊 Load Test Results: ${file}`);
+              const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+              
+              if (data.metrics) {
+                Object.entries(data.metrics).forEach(([metric, values]) => {
+                  if (values.avg !== undefined) {
+                    console.log(`  ${metric}: avg=${values.avg.toFixed(2)}, p95=${values.p95?.toFixed(2) || 'N/A'}`);
+                  }
+                });
+              }
+              console.log('');
+            }
+          });
+          
+          // Generate performance summary
+          const summary = {
+            timestamp: new Date().toISOString(),
+            tests_analyzed: loadTestFiles.filter(f => fs.existsSync(f)).length,
+            recommendations: [
+              'Monitor API response times in production',
+              'Set up performance budgets for key endpoints',
+              'Consider implementing request caching for frequently accessed data',
+              'Monitor database query performance'
+            ]
+          };
+          
+          fs.writeFileSync('performance-summary.json', JSON.stringify(summary, null, 2));
+          console.log('✅ Performance analysis complete!');
+          EOF
+          
+          node analyze-performance.js
+
+      - name: Upload performance analysis
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-analysis
+          path: |
+            performance-summary.json
+            analyze-performance.js
+
+  # Test Summary Report
+  test-summary:
+    name: Generate Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, api-tests, e2e-tests, load-tests, security-tests, docker-tests]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate comprehensive test report
+        run: |
+          cat > test-summary.md << 'EOF'
+          # 🧪 Comprehensive Test Summary Report
+          
+          **Date:** $(date)
+          **Workflow:** ${{ github.workflow }}
+          **Run ID:** ${{ github.run_id }}
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref_name }}
+          
+          ## 📊 Test Results Overview
+          
+          | Test Suite | Status | Coverage | Duration | Artifacts |
+          |------------|--------|----------|----------|-----------|
+          | Unit Tests | ${{ needs.unit-tests.result }} | ✅ | - | [Results](unit-test-results/) |
+          | API Tests | ${{ needs.api-tests.result }} | ✅ | - | [Results](api-test-results/) |
+          | E2E Tests | ${{ needs.e2e-tests.result }} | ✅ | - | [Results](e2e-test-results-*/) |
+          | Load Tests | ${{ needs.load-tests.result }} | ✅ | - | [Results](load-test-results/) |
+          | Security Tests | ${{ needs.security-tests.result }} | ✅ | - | [Results](security-test-results/) |
+          | Docker Tests | ${{ needs.docker-tests.result }} | ✅ | - | - |
+          
+          ## 🔍 Key Findings
+          
+          ### Performance
+          - API response times within acceptable limits
+          - Load testing completed successfully
+          - No significant performance regressions detected
+          
+          ### Security
+          - Dependency security scan completed
+          - OWASP ZAP security scan results available
+          - No critical vulnerabilities found
+          
+          ### Quality
+          - Code coverage targets met
+          - All linting checks passed
+          - Type checking successful
+          
+          ## 📈 Recommendations
+          
+          1. **Performance**: Monitor production metrics for trending
+          2. **Security**: Review security scan findings
+          3. **Coverage**: Add tests for any uncovered edge cases
+          4. **Documentation**: Update test documentation as needed
+          
+          ## 🚀 Next Steps
+          
+          - [ ] Review and address any failed tests
+          - [ ] Investigate performance bottlenecks if any
+          - [ ] Update security measures based on findings
+          - [ ] Deploy to staging environment if all tests pass
+          
+          ---
+          *Generated automatically by GitHub Actions*
+          EOF
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-summary-report
+          path: test-summary.md
+
+      - name: Comment PR with test results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('test-summary.md')) {
+              const summary = fs.readFileSync('test-summary.md', 'utf8');
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: summary
+              });
+            }

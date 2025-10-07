@@ -5,9 +5,14 @@ import { DashboardLayout } from '@/components/dashboard/layout'
 import { SimilaritySearchForm } from '@/components/similarity/similarity-search-form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, FileText, Sparkles, Target } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { ArrowLeft, FileText, Sparkles, Target, Building, Users, Briefcase, Globe } from 'lucide-react'
+import { formatUploadDate } from '@/lib/date-utils'
+import { 
+  LAW_FIRM_OPTIONS, 
+  FUND_MANAGER_OPTIONS, 
+  FUND_ADMIN_OPTIONS, 
+  JURISDICTION_OPTIONS
+} from '@/lib/metadata-constants'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -65,7 +70,7 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
                 Similarity Search
               </h1>
               <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Find documents similar to your selected document
+                Search documents similar to your selected document
               </p>
             </div>
           </div>
@@ -80,34 +85,57 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
-                  <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-                </div>
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
+                <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div className="space-y-2 flex-1">
                 <div>
                   <h3 className="font-semibold text-gray-900 dark:text-white">
                     {document.title}
                   </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {document.filename}
-                  </p>
-                  <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    <span>{formatFileSize(document.file_size)}</span>
-                    <span>{formatDistanceToNow(new Date(document.created_at), { addSuffix: true })}</span>
-                  </div>
                 </div>
-              </div>
-              <div className="flex gap-2">
-                {document.metadata?.investor_type && (
-                  <Badge variant="outline">
-                    {document.metadata.investor_type}
-                  </Badge>
-                )}
-                {document.metadata?.document_type && (
-                  <Badge variant="outline">
-                    {document.metadata.document_type}
-                  </Badge>
+                
+                {/* Basic document info */}
+                <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                  <span>{formatFileSize(document.file_size)}</span>
+                  <span>{formatUploadDate(document.created_at)}</span>
+                  {document.page_count && (
+                    <span>{document.page_count === 1 ? '1 page' : `${document.page_count} pages`}</span>
+                  )}
+                </div>
+
+                {/* Business metadata - matching document list style */}
+                {(document.metadata?.law_firm || 
+                  document.metadata?.fund_manager || 
+                  document.metadata?.fund_admin || 
+                  document.metadata?.jurisdiction) && (
+                  <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+                    {document.metadata?.law_firm && (
+                      <div className="flex items-center gap-1">
+                        <Building className="h-3 w-3" />
+                        {LAW_FIRM_OPTIONS.find(opt => opt.value === document.metadata?.law_firm as any)?.label || String(document.metadata?.law_firm)}
+                      </div>
+                    )}
+                    {document.metadata?.fund_manager && (
+                      <div className="flex items-center gap-1">
+                        <Users className="h-3 w-3" />
+                        {FUND_MANAGER_OPTIONS.find(opt => opt.value === document.metadata?.fund_manager as any)?.label || String(document.metadata?.fund_manager)}
+                      </div>
+                    )}
+                    {document.metadata?.fund_admin && (
+                      <div className="flex items-center gap-1">
+                        <Briefcase className="h-3 w-3" />
+                        {FUND_ADMIN_OPTIONS.find(opt => opt.value === document.metadata?.fund_admin as any)?.label || String(document.metadata?.fund_admin)}
+                      </div>
+                    )}
+                    {document.metadata?.jurisdiction && (
+                      <div className="flex items-center gap-1">
+                        <Globe className="h-3 w-3" />
+                        {JURISDICTION_OPTIONS.find(opt => opt.value === document.metadata?.jurisdiction as any)?.label || String(document.metadata?.jurisdiction)}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
