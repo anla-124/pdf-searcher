@@ -47,7 +47,7 @@ export class PaginationUtils {
     const page = Math.max(1, parseInt(searchParams.get('page') || '1'))
     
     // Parse limit (default: 20, max: 100)
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '20')))
+    const limit = Math.max(1, parseInt(searchParams.get('limit') || '1000'))
     
     // Calculate offset (0-based)
     const offset = (page - 1) * limit
@@ -161,10 +161,7 @@ export class PaginationUtils {
       errors.push('Limit must be greater than 0')
     }
     
-    if (params.limit > 100) {
-      errors.push('Limit cannot exceed 100')
-    }
-    
+
     if (params.sortOrder && !['asc', 'desc'].includes(params.sortOrder)) {
       errors.push('Sort order must be "asc" or "desc"')
     }
