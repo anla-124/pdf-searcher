@@ -383,7 +383,7 @@ function generateTimeoutConfig(
         processingTimeoutMinutes: Math.min(30, Math.ceil(baseTimeout / 60)),
         chunkTimeoutSeconds: 120,
         retryTimeoutSeconds: 30,
-        maxRetryAttempts: 5,
+        maxRetryAttempts: 25,
         enableCircuitBreaker: true
       }
       
@@ -392,7 +392,7 @@ function generateTimeoutConfig(
         processingTimeoutMinutes: Math.min(45, Math.ceil(baseTimeout / 60)),
         chunkTimeoutSeconds: 180,
         retryTimeoutSeconds: 45,
-        maxRetryAttempts: 7,
+        maxRetryAttempts: 35,
         enableCircuitBreaker: true
       }
       
