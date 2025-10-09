@@ -12,11 +12,9 @@ export default defineConfig({
     // Global test setup - Jest compatibility
     setupFiles: ['./tests/setup.ts', './tests/jest-compat.ts'],
     
-    // Test patterns - now includes both src/ and tests/ directories
+    // Test patterns - includes src/ tests only (old tests/api removed)
     include: [
-      'src/**/*.{test,spec}.{js,ts,tsx}',
-      'tests/unit/**/*.{test,spec}.{js,ts}',
-      'tests/api/**/*.{test,spec}.{js,ts}'
+      'src/**/*.{test,spec}.{js,ts,tsx}'
     ],
     exclude: [
       'node_modules',
