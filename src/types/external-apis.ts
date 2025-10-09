@@ -1010,7 +1010,7 @@ export interface DatabaseDocument {
   filename: string
   file_path: string
   file_size: number
-  mime_type: string
+  content_type: string
   user_id: string
   status: 'pending' | 'processing' | 'completed' | 'error' | 'cancelled'
   extracted_fields?: Record<string, unknown>

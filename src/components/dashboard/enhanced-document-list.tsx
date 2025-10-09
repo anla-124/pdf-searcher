@@ -276,24 +276,47 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
   // Cancel processing handler
   const handleCancelProcessing = useCallback(async (documentId: string) => {
     try {
+      // Optimistically update UI
+      setDocuments(prev => prev.map(doc =>
+        doc.id === documentId ? { ...doc, status: 'cancelling' as Document['status'] } : doc
+      ))
+
       const response = await fetch(`/api/documents/${documentId}/cancel`, {
         method: 'POST'
       })
 
       if (!response.ok) {
-        throw new Error('Failed to cancel processing')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to cancel processing')
       }
 
-      // Update document status locally
-      setDocuments(prev => prev.map(doc => 
-        doc.id === documentId ? { ...doc, status: 'cancelling' as Document['status'] } : doc
+      const result = await response.json()
+
+      // Update document status to cancelled
+      setDocuments(prev => prev.map(doc =>
+        doc.id === documentId ? {
+          ...doc,
+          status: 'cancelled' as Document['status'],
+          processing_error: 'Processing cancelled by user'
+        } : doc
       ))
-      
+
+      // Remove from tracking if it was being monitored
+      setDocumentStatuses(prev => {
+        const next = new Map(prev)
+        next.delete(documentId)
+        return next
+      })
+
+      console.log('Processing cancelled successfully:', result)
+
     } catch (error) {
       console.error('Error cancelling processing:', error)
-      alert('Failed to cancel processing. Please try again.')
+      // Revert optimistic update on error
+      await fetchDocuments()
+      alert(error instanceof Error ? error.message : 'Failed to cancel processing. Please try again.')
     }
-  }, [])
+  }, [fetchDocuments])
 
   const handleRetryProcessing = useCallback(async (document: Document) => {
     setRetryingDocuments(prev => {
@@ -738,6 +761,18 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
           icon: AlertCircle,
           color: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800',
           label: 'Error'
+        }
+      case 'cancelled':
+        return {
+          icon: X,
+          color: 'bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-950/50 dark:text-gray-400 dark:border-gray-800',
+          label: 'Cancelled'
+        }
+      case 'cancelling':
+        return {
+          icon: X,
+          color: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/50 dark:text-orange-400 dark:border-orange-800',
+          label: 'Cancelling...'
         }
       default:
         return {
