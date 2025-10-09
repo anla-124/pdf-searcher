@@ -80,11 +80,15 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy credentials if they exist
-COPY --from=builder --chown=nextjs:nodejs /app/credentials ./credentials
+# Create directories
+RUN mkdir -p ./credentials ./scripts
 
 # Copy scripts directory for queue worker
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+
+# Note: credentials directory is created but left empty
+# Credentials are mounted as volume at runtime (see docker-compose.yml)
+# This allows the build to succeed in CI where credentials don't exist
 
 # Copy node_modules for queue worker dependencies
 COPY --from=deps /app/node_modules ./node_modules
