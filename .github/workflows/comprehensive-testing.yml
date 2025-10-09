@@ -361,24 +361,24 @@ jobs:
           EOF
 
       - name: Build Docker image
-        run: docker-compose --env-file .env.local build --no-cache
+        run: docker compose --env-file .env.local build --no-cache
 
       - name: Test Docker containers
         run: |
-          docker-compose --env-file .env.local up -d
+          docker compose --env-file .env.local up -d
           sleep 30
-          
+
           # Test container health
-          docker-compose ps
-          
+          docker compose ps
+
           # Test API accessibility
           curl -f http://localhost:3000/api/health || exit 1
-          
+
           # Check logs for errors
-          docker-compose logs
-          
+          docker compose logs
+
           # Cleanup
-          docker-compose down
+          docker compose down
 
   # Performance Analysis
   performance-analysis:
