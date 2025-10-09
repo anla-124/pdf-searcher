@@ -1,11 +1,12 @@
 import React from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SimilaritySearchForm } from '../similarity-search-form'
 import { Document } from '@/types'
 
 // Mock the SimilarityResults component
-jest.mock('../similarity-results', () => ({
+vi.mock('../similarity-results', () => ({
   SimilarityResults: ({ results, isLoading }: { results: any[], isLoading: boolean }) => (
     <div data-testid="similarity-results">
       {isLoading ? 'Loading...' : `${results.length} results`}
@@ -34,10 +35,10 @@ const mockDocument: Document = {
 }
 
 // Mock fetch for API calls
-const mockFetch = jest.fn()
+const mockFetch = vi.fn()
 global.fetch = mockFetch
 
-describe.skip('SimilaritySearchForm', () => {
+describe.skip('SimilaritySearchForm', () => { // TODO: Update tests to match current component implementation
   beforeEach(() => {
     mockFetch.mockClear()
     mockFetch.mockResolvedValue({
@@ -204,22 +205,22 @@ describe.skip('SimilaritySearchForm', () => {
 
   it('handles API errors gracefully', async () => {
     const user = userEvent.setup()
-    
+
     // Mock API error
     mockFetch.mockRejectedValueOnce(new Error('API Error'))
-    
+
     // Mock alert to verify error handling
-    const alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {})
-    
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+
     render(<SimilaritySearchForm documentId="test-doc-1" sourceDocument={mockDocument} />)
-    
+
     const searchButton = screen.getByRole('button', { name: /search/i })
     await user.click(searchButton)
-    
+
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith('Failed to search for similar documents. Please try again.')
     })
-    
+
     alertSpy.mockRestore()
   })
 

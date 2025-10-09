@@ -218,26 +218,34 @@ describe('External Service Integrations', () => {
       expect(data).toBeNull()
     })
 
-    it.skip('should properly handle authentication', async () => { // Skip: requires auth session setup
+    it.skip('should properly handle authentication', async () => { // TODO: MSW auth handler needs proper session token
       const supabase = await createServiceClient()
-      
+
       // Test with mock auth token
-      const mockUser = {
-        id: 'test-user-id',
-        email: 'test@example.com'
+      const mockAuthResponse = {
+        user: {
+          id: 'test-user-id',
+          email: 'test@example.com',
+          aud: 'authenticated',
+          role: 'authenticated',
+          created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-01-01T00:00:00Z'
+        }
       }
 
-      // Mock successful auth response
+      // Mock successful auth response with proper format
       server.use(
         http.get('https://bsthehpinjtiiznikbyw.supabase.co/auth/v1/user', () => {
-          return HttpResponse.json(mockUser)
+          return HttpResponse.json(mockAuthResponse)
         })
       )
 
       const { data: { user }, error } = await supabase.auth.getUser()
-      
+
       expect(error).toBeNull()
-      expect(user).toEqual(mockUser)
+      expect(user).toBeDefined()
+      expect(user?.id).toBe('test-user-id')
+      expect(user?.email).toBe('test@example.com')
     })
   })
 
