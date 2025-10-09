@@ -64,7 +64,7 @@ export async function POST(
       return NextResponse.json({ error: 'Document is not in an error state' }, { status: 400 })
     }
 
-    let cleanedMetadata: Record<string, unknown> | null = document.metadata ? { ...document.metadata } : null
+    const cleanedMetadata: Record<string, unknown> | null = document.metadata ? { ...document.metadata } : null
     if (cleanedMetadata) {
       delete cleanedMetadata['embeddings_skipped']
       delete cleanedMetadata['embeddings_error']

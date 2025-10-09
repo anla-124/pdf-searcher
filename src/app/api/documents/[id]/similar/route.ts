@@ -67,7 +67,7 @@ export async function POST(
     }
 
     // Direct similarity search without caching
-    let results = await searchSimilarDocuments(id, {
+    const results = await searchSimilarDocuments(id, {
       topK,
       filter: pineconeFilters,
       threshold,
