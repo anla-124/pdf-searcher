@@ -1350,10 +1350,32 @@ async function generateEmbeddingsWithUnlimitedRetries(
         }
       }
 
-      const baseDelay = Math.min(1000 * Math.pow(2, Math.min(attempt, 6)), 60000)
-      const jitter = Math.random() * 1000
+      // PRODUCTION OPTIMIZATION: Intelligent backoff based on error type
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      const isRateLimit = errorMessage.toLowerCase().includes('rate') ||
+                         errorMessage.toLowerCase().includes('quota') ||
+                         errorMessage.toLowerCase().includes('429') ||
+                         errorMessage.toLowerCase().includes('limit') ||
+                         errorMessage.toLowerCase().includes('throttl')
+
+      // More aggressive backoff for rate limits, gentler for other errors
+      const backoffMultiplier = isRateLimit ? 2 : 1.5
+      const baseDelay = Math.min(1000 * Math.pow(backoffMultiplier, Math.min(attempt, 8)), 120000)
+
+      // Larger jitter for rate limits to spread out retry attempts
+      const jitterRange = isRateLimit ? baseDelay * 0.5 : 1000
+      const jitter = Math.random() * jitterRange
       const delay = baseDelay + jitter
-      logger.debug('Waiting before retry attempt', { delaySeconds: Math.round(delay / 1000), nextAttempt: attempt + 1, documentId, component: 'document-processing' })
+
+      logger.info('Waiting before retry attempt', {
+        delaySeconds: (delay / 1000).toFixed(1),
+        nextAttempt: attempt + 1,
+        documentId,
+        isRateLimit,
+        errorType: isRateLimit ? 'rate_limit' : 'other',
+        component: 'document-processing'
+      })
+
       await new Promise(resolve => setTimeout(resolve, delay))
     }
   }

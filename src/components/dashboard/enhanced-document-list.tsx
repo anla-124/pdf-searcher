@@ -15,12 +15,12 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { SearchableMultiSelect } from '@/components/ui/searchable-multi-select'
 import { SearchModeModal } from '@/components/similarity/search-mode-modal'
 import { EditDocumentMetadataModal } from './edit-document-metadata-modal'
-import { 
-  FileText, 
+import {
+  FileText,
   Target,
-  Search, 
-  Calendar, 
-  Filter, 
+  Search,
+  Calendar,
+  Filter,
   Download,
   AlertCircle,
   CheckCircle,
@@ -45,7 +45,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Loader2
+  Loader2,
+  RotateCcw
 } from 'lucide-react'
 import { 
   LAW_FIRM_OPTIONS, 
@@ -1315,8 +1316,28 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                                       <Eye className="h-3 w-3 mr-1" />
                                       View
                                     </Button>
-                                    {!document.metadata?.embeddings_skipped && (
-                                      <Button 
+                                    {document.metadata?.embeddings_skipped ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleRetryProcessing(document)}
+                                        disabled={retryingDocuments.has(document.id)}
+                                        className="min-w-[120px] border-amber-300 text-amber-700 hover:bg-amber-50"
+                                      >
+                                        {retryingDocuments.has(document.id) ? (
+                                          <>
+                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                            Retrying...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <RotateCcw className="h-3 w-3 mr-1" />
+                                            Retry Embeddings
+                                          </>
+                                        )}
+                                      </Button>
+                                    ) : (
+                                      <Button
                                         size="sm"
                                         onClick={() => handleSetSearchModeDocument(document)}
                                       >
