@@ -65,15 +65,16 @@ jobs:
         run: |
           # Determine which tests to skip based on event type and inputs
           SKIP_E2E="${{ github.event.inputs.skip_e2e || 'false' }}"
-          SKIP_LOAD="${{ github.event.inputs.skip_load || 'false' }}"
-          SKIP_SECURITY="${{ github.event.inputs.skip_security || 'false' }}"
-          
-          # Skip load and security tests on PRs by default (unless manually triggered)
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          SKIP_LOAD="${{ github.event.inputs.skip_load || 'true' }}"
+          SKIP_SECURITY="${{ github.event.inputs.skip_security || 'true' }}"
+
+          # Skip load and security tests by default (require database/credentials)
+          # Only run when explicitly enabled via workflow_dispatch
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             SKIP_LOAD="true"
             SKIP_SECURITY="true"
           fi
-          
+
           echo "skip_e2e=$SKIP_E2E" >> $GITHUB_OUTPUT
           echo "skip_load=$SKIP_LOAD" >> $GITHUB_OUTPUT
           echo "skip_security=$SKIP_SECURITY" >> $GITHUB_OUTPUT
