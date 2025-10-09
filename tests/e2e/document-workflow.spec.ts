@@ -31,20 +31,21 @@ test.describe('PDF Searcher Document Workflow', () => {
     await fileInput.setInputFiles('./tests/fixtures/sample-document.pdf')
 
     // Step 4: Fill metadata form - these are SearchableSelect components
+    // Using values from current metadata constants
     await page.click('[data-testid="law-firm-select"]')
-    await page.getByText('Skadden, Arps, Slate, Meagher & Flom LLP').click()
-    
+    await page.getByText('STB').click()
+
     await page.click('[data-testid="fund-manager-select"]')
     await page.getByText('Blackstone').click()
-    
+
     await page.click('[data-testid="fund-admin-select"]')
     await page.getByText('Standish').click()
-    
+
     await page.click('[data-testid="jurisdiction-select"]')
     await page.getByText('Delaware').click()
 
     // Verify dropdowns show selected values (SearchableSelect shows selected text)
-    await expect(page.locator('[data-testid="law-firm-select"]')).toContainText('Skadden')
+    await expect(page.locator('[data-testid="law-firm-select"]')).toContainText('STB')
     await expect(page.locator('[data-testid="fund-manager-select"]')).toContainText('Blackstone')
     await expect(page.locator('[data-testid="fund-admin-select"]')).toContainText('Standish')
     await expect(page.locator('[data-testid="jurisdiction-select"]')).toContainText('Delaware')
@@ -80,12 +81,12 @@ test.describe('PDF Searcher Document Workflow', () => {
 
     // Step 10: Click on document to view details
     await documentItem.click()
-    
-    // Wait for document details page (documents/[id] route)
-    await expect(page).toHaveURL(/\/documents\/\d+/)
-    
+
+    // Wait for document details page (documents/[id] route with UUID)
+    await expect(page).toHaveURL(/\/documents\/[a-f0-9-]+/)
+
     // Verify document content is displayed
     await expect(page.locator('h1')).toBeVisible() // Document title
-    await expect(page.locator('text=Processing Status')).toBeVisible() // Status section
+    await expect(page.locator('text=Processing Status|Status')).toBeVisible() // Status section
   })
 })

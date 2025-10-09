@@ -129,13 +129,10 @@ export default function () {
   const pdfContent = generateMockPDF(fileSizeKB)
   const filename = `test-document-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.pdf`
   
-  // Prepare multipart form data
+  // Prepare multipart form data with metadata as JSON string
   const formData = {
     file: http.file(Buffer.from(pdfContent), filename, 'application/pdf'),
-    law_firm: metadata.law_firm,
-    fund_manager: metadata.fund_manager,
-    fund_admin: metadata.fund_admin,
-    jurisdiction: metadata.jurisdiction,
+    metadata: JSON.stringify(metadata),
   }
 
   const params = {
@@ -235,10 +232,10 @@ export default function () {
   // Test concurrent batch status endpoint occasionally
   if (Math.random() < 0.1) { // 10% chance
     const batchStatusResponse = http.get(
-      `${BASE_URL}/api/admin/batch-status`,
+      `${BASE_URL}/api/debug/batch-status`,
       { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
     )
-    
+
     if (batchStatusResponse.status === 200) {
       try {
         const batchData = JSON.parse(batchStatusResponse.body)
@@ -267,10 +264,12 @@ export function testEdgeCases() {
   const largePdf = generateMockPDF(40000) // 40MB file
   const largeFormData = {
     file: http.file(Buffer.from(largePdf), 'large-test.pdf', 'application/pdf'),
-    law_firm: 'STB',
-    fund_manager: 'Blackstone',
-    fund_admin: 'Standish',
-    jurisdiction: 'Delaware',
+    metadata: JSON.stringify({
+      law_firm: 'STB',
+      fund_manager: 'Blackstone',
+      fund_admin: 'Standish',
+      jurisdiction: 'Delaware',
+    }),
   }
 
   const largeFileResponse = http.post(`${BASE_URL}/api/documents/upload`, largeFormData, params)
@@ -283,10 +282,12 @@ export function testEdgeCases() {
   // Test invalid file type
   const textFileData = {
     file: http.file('This is not a PDF file', 'invalid.txt', 'text/plain'),
-    law_firm: 'STB',
-    fund_manager: 'Blackstone',
-    fund_admin: 'Standish',
-    jurisdiction: 'Delaware',
+    metadata: JSON.stringify({
+      law_firm: 'STB',
+      fund_manager: 'Blackstone',
+      fund_admin: 'Standish',
+      jurisdiction: 'Delaware',
+    }),
   }
 
   const invalidFileResponse = http.post(`${BASE_URL}/api/documents/upload`, textFileData, params)
@@ -298,8 +299,10 @@ export function testEdgeCases() {
   // Test missing metadata
   const incompleteFormData = {
     file: http.file(Buffer.from(generateMockPDF(100)), 'incomplete.pdf', 'application/pdf'),
-    law_firm: 'STB',
-    // Missing other required fields
+    metadata: JSON.stringify({
+      law_firm: 'STB',
+      // Missing other required fields
+    }),
   }
 
   const incompleteResponse = http.post(`${BASE_URL}/api/documents/upload`, incompleteFormData, params)
@@ -332,7 +335,7 @@ export function teardown(data) {
   console.log(`Ended: ${new Date().toISOString()}`)
   
   // Final queue status check
-  const finalStatus = http.get(`${BASE_URL}/api/admin/batch-status`, {
+  const finalStatus = http.get(`${BASE_URL}/api/debug/batch-status`, {
     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
   })
   

@@ -161,11 +161,7 @@ jobs:
           threshold: "MEDIUM"
 
   # API Security Testing
-  - type: openapi
-    parameters:
-      apiFile: "http://localhost:3000/api/openapi.json"
-      apiUrl: "http://localhost:3000"
-      context: "PDF AI Assistant"
+  # Note: OpenAPI spec not currently available, using spider-based discovery instead
 
   # Report Generation
   - type: report
@@ -214,7 +210,8 @@ rules:
     endpoints:
       - "/api/documents"
       - "/api/search"
-      - "/api/admin/*"
+      - "/api/debug/*"
+      - "/api/cron/*"
     tests:
       - type: "token_manipulation"
         payloads:
@@ -260,14 +257,12 @@ rules:
           - "A" * 10000  # Very long string
           - "search query with \x00 null bytes"
 
-  # Admin Panel Security
-  - name: "Admin Panel Security"
-    description: "Test admin panel security and access controls"
+  # Debug/Admin Panel Security
+  - name: "Debug Panel Security"
+    description: "Test debug panel security and access controls"
     endpoints:
-      - "/api/admin/performance-metrics"
-      - "/api/admin/usage-analytics"
-      - "/api/admin/batch-status"
-      - "/api/admin/cleanup-orphaned"
+      - "/api/debug/batch-status"
+      - "/api/debug/retry-embeddings"
     tests:
       - type: "authorization_bypass"
         scenarios:
