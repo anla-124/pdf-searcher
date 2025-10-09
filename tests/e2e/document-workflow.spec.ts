@@ -7,12 +7,15 @@ import { test, expect } from '@playwright/test'
 
 test.describe('PDF Searcher Document Workflow', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the application
-    await page.goto('/')
+    // Navigate to the login page (root redirects to /login)
+    await page.goto('/login')
   })
 
   test('should load login page', async ({ page }) => {
-    // Verify login page loads
+    // Verify we're on the login page
+    await expect(page).toHaveURL(/\/login/)
+
+    // Verify login page title
     await expect(page.locator('h1')).toContainText('PDF Searcher')
 
     // Verify login button is present
