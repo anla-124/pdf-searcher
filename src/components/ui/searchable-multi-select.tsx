@@ -185,8 +185,9 @@ export function SearchableMultiSelect({
                       <input
                         type="checkbox"
                         checked={values.includes(option.value)}
-                        onChange={() => {}} // Handled by onClick above
+                        onChange={() => { /* Handled by onClick above */ }}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-3 w-3"
+                        readOnly
                       />
                       <span>{option.label}</span>
                     </div>

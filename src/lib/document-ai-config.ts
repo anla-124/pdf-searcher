@@ -32,6 +32,6 @@ export function getProcessorName(processorId: string): string {
 // capture full text for similarity search. Form Parser is kept available for
 // future use but not selected automatically.
 export function detectOptimalProcessor(filename: string, fileSize: number): ProcessorType {
-  console.log(`Using OCR processor for document: ${filename} (${fileSize} bytes)`)
+  console.warn(`Using OCR processor for document: ${filename} (${fileSize} bytes)`)
   return PROCESSOR_TYPES.DOCUMENT_OCR
 }

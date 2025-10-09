@@ -63,12 +63,12 @@ export const batchProcessor = {
 
   async processBatchResults(documentId: string, operationId: string): Promise<void> {
     // Mock implementation - this would typically process the batch results
-    console.log(`Processing batch results for document ${documentId}, operation ${operationId}`)
+    console.warn(`Processing batch results for document ${documentId}, operation ${operationId}`)
   },
 
   async cleanupBatchOperation(documentId: string): Promise<void> {
     // Mock implementation - this would typically clean up temporary files
-    console.log(`Cleaning up batch operation for document ${documentId}`)
+    console.warn(`Cleaning up batch operation for document ${documentId}`)
   }
 }
 

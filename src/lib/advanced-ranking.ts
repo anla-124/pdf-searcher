@@ -58,8 +58,8 @@ export class AdvancedRankingEngine {
       maxSimilarDocuments = 3
     } = options
 
-    console.log(`🎯 Advanced ranking for ${results.length} results`)
-    console.log(`📊 Features: personalization=${enablePersonalization}, business=${enableBusinessContext}, quality=${enableQualityScoring}, diversity=${enableDiversityBoost}`)
+    console.warn(`🎯 Advanced ranking for ${results.length} results`)
+    console.warn(`📊 Features: personalization=${enablePersonalization}, business=${enableBusinessContext}, quality=${enableQualityScoring}, diversity=${enableDiversityBoost}`)
 
     const supabase = createServiceClient()
     
@@ -166,8 +166,8 @@ export class AdvancedRankingEngine {
     // Sort by final score
     scoredResults.sort((a, b) => b.finalScore - a.finalScore)
 
-    console.log(`✅ Advanced ranking completed`)
-    console.log(`📈 Score improvements: ${scoredResults.filter(r => r.finalScore > r.baseScore).length}/${scoredResults.length} documents`)
+    console.warn(`✅ Advanced ranking completed`)
+    console.warn(`📈 Score improvements: ${scoredResults.filter(r => r.finalScore > r.baseScore).length}/${scoredResults.length} documents`)
 
     return scoredResults
   }

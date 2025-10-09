@@ -86,7 +86,7 @@ export const shouldLog = {
  */
 export function debugLoggingConfig(): void {
   if (loggingConfig.verboseLogs) {
-    console.log('🔧 Logging Configuration:', {
+    console.warn('🔧 Logging Configuration:', {
       verboseLogs: loggingConfig.verboseLogs,
       logLevel: loggingConfig.logLevel,
       environment: process.env['NODE_ENV'],

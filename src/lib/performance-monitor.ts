@@ -33,7 +33,7 @@ export class PerformanceMonitor {
         this.metrics.shift()
       }
 
-      console.log(`📊 Performance metric recorded: ${type} = ${value}`)
+      console.warn(`📊 Performance metric recorded: ${type} = ${value}`)
     } catch (error) {
       console.warn('Failed to record performance metric:', error)
     }

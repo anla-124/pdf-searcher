@@ -279,7 +279,7 @@ function calculateMemoryRequirements(
   sizeBytes: number,
   estimatedPages: number
 ): MemoryRequirements {
-  const sizeMB = sizeBytes / (1024 * 1024)
+  const _sizeMB = sizeBytes / (1024 * 1024)
   const tierConfig = DOCUMENT_SIZE_TIERS[tier]
   
   // Base memory estimation: ~5-10MB per page for processing
@@ -437,7 +437,7 @@ export function estimateProcessingTime(analysis: DocumentSizeAnalysis): {
   estimatedMinutes: number
   description: string
 } {
-  const { tier, estimatedPages, strategy } = analysis
+  const { estimatedPages, strategy } = analysis
   
   // Base processing time estimation
   let estimatedMinutes: number

@@ -18,7 +18,7 @@ export async function generateVertexEmbeddings(text: string): Promise<number[]> 
       throw new Error('Text is empty after cleaning')
     }
 
-    console.log('Generating Vertex AI embeddings for text length:', truncatedText.length)
+    console.warn('Generating Vertex AI embeddings for text length:', truncatedText.length)
 
     const client = await auth.getClient()
     const projectId = process.env['GOOGLE_CLOUD_PROJECT_ID']!
@@ -48,7 +48,7 @@ export async function generateVertexEmbeddings(text: string): Promise<number[]> 
         return embeddings
       }
     } catch (modelError: unknown) {
-      console.log('text-embedding-004 failed, trying gecko model:', 
+      console.warn('text-embedding-004 failed, trying gecko model:', 
         modelError instanceof Error && 'status' in modelError ? (modelError as { status: number }).status : 'unknown error')
       
       // Fallback to gecko model with different structure

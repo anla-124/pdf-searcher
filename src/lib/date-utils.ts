@@ -86,7 +86,7 @@ export function formatUploadDateExplicit(dateString: string): string {
       throw new Error('Invalid date')
     }
     
-    console.log('🕐 Explicit conversion:', {
+    console.warn('🕐 Explicit conversion:', {
       input: dateString,
       utcDate: utcDate.toISOString(),
       localDate: utcDate.toString(),

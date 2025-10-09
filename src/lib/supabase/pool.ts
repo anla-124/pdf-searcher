@@ -64,7 +64,7 @@ export class SupabaseConnectionPool {
     
     // Only log initialization once
     if (!SupabaseConnectionPool.isInitialized) {
-      console.log('🔗 Supabase Connection Pool initialized:', {
+      console.warn('🔗 Supabase Connection Pool initialized:', {
         mode: this.config.unlimitedMode ? 'UNLIMITED' : 'LIMITED',
         minConnections: this.config.minConnections,
         maxConnections: this.config.unlimitedMode ? '∞' : this.config.maxConnections,
@@ -85,7 +85,7 @@ export class SupabaseConnectionPool {
   /**
    * Get a pooled authenticated client for user sessions
    */
-  async getAuthenticatedClient(sessionId?: string): Promise<SupabaseClient> {
+  async getAuthenticatedClient(_sessionId?: string): Promise<SupabaseClient> {
     const cookieStore = await cookies()
     
     // Create session-aware client
@@ -97,17 +97,17 @@ export class SupabaseConnectionPool {
           get(name: string) {
             return cookieStore.get(name)?.value
           },
-          set(name: string, value: string, options: any) {
+          set(name: string, value: string, options: Record<string, unknown>) {
             try {
               cookieStore.set(name, value, options)
-            } catch (error) {
+            } catch (_error) {
               // Ignore errors in Server Components
             }
           },
-          remove(name: string, options: any) {
+          remove(name: string, options: Record<string, unknown>) {
             try {
               cookieStore.set(name, '', { ...options, maxAge: 0 })
-            } catch (error) {
+            } catch (_error) {
               // Ignore errors in Server Components
             }
           },
@@ -199,7 +199,7 @@ export class SupabaseConnectionPool {
    * Graceful shutdown - cleanup all connections
    */
   async shutdown(): Promise<void> {
-    console.log('🔗 Shutting down Supabase connection pool...')
+    console.warn('🔗 Shutting down Supabase connection pool...')
     
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval)
@@ -215,7 +215,7 @@ export class SupabaseConnectionPool {
     this.servicePool = []
     this.sessionPools.clear()
     
-    console.log('🔗 Connection pool shutdown complete')
+    console.warn('🔗 Connection pool shutdown complete')
   }
 
   // Private methods
@@ -313,16 +313,32 @@ export class SupabaseConnectionPool {
     })
 
     if (connectionsToRemove.length > 0) {
-      console.log(`🔗 Cleaned up ${connectionsToRemove.length} idle connections`)
+      console.warn(`🔗 Cleaned up ${connectionsToRemove.length} idle connections`)
     }
   }
 }
 
-// Export singleton instance
-export const connectionPool = SupabaseConnectionPool.getInstance()
+// Lazy initialization to avoid errors during build
+let connectionPoolInstance: SupabaseConnectionPool | null = null
+
+function getConnectionPoolInstance() {
+  if (!connectionPoolInstance) {
+    connectionPoolInstance = SupabaseConnectionPool.getInstance()
+  }
+  return connectionPoolInstance
+}
+
+export const connectionPool = {
+  getAuthenticatedClient: async () => getConnectionPoolInstance().getAuthenticatedClient(),
+  getServiceClient: async () => getConnectionPoolInstance().getServiceClient(),
+  releaseServiceClient: (client: SupabaseClient) => getConnectionPoolInstance().releaseServiceClient(client),
+  getMetrics: () => getConnectionPoolInstance().getMetrics(),
+  healthCheck: async () => getConnectionPoolInstance().healthCheck(),
+  shutdown: () => getConnectionPoolInstance().shutdown()
+}
 
 // Graceful shutdown handler
 if (typeof process !== 'undefined') {
-  process.on('SIGTERM', () => connectionPool.shutdown())
-  process.on('SIGINT', () => connectionPool.shutdown())
+  process.on('SIGTERM', () => getConnectionPoolInstance().shutdown())
+  process.on('SIGINT', () => getConnectionPoolInstance().shutdown())
 }

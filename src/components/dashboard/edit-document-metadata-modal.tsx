@@ -144,7 +144,7 @@ export function EditDocumentMetadataModal({
                 Law Firm
               </Label>
               <SearchableSelect
-                options={LAW_FIRM_OPTIONS as unknown as any[]}
+                options={LAW_FIRM_OPTIONS as unknown as {value: string; label: string}[]}
                 value={metadata.law_firm}
                 onValueChange={(value: string) =>
                   setMetadata(prev => ({ ...prev, law_firm: value as LawFirmOption }))
@@ -163,7 +163,7 @@ export function EditDocumentMetadataModal({
                 Fund Manager
               </Label>
               <SearchableSelect
-                options={FUND_MANAGER_OPTIONS as unknown as any[]}
+                options={FUND_MANAGER_OPTIONS as unknown as {value: string; label: string}[]}
                 value={metadata.fund_manager}
                 onValueChange={(value: string) =>
                   setMetadata(prev => ({ ...prev, fund_manager: value as FundManagerOption }))
@@ -182,7 +182,7 @@ export function EditDocumentMetadataModal({
                 Fund Admin
               </Label>
               <SearchableSelect
-                options={FUND_ADMIN_OPTIONS as unknown as any[]}
+                options={FUND_ADMIN_OPTIONS as unknown as {value: string; label: string}[]}
                 value={metadata.fund_admin}
                 onValueChange={(value: string) =>
                   setMetadata(prev => ({ ...prev, fund_admin: value as FundAdminOption }))
@@ -201,7 +201,7 @@ export function EditDocumentMetadataModal({
                 Jurisdiction
               </Label>
               <SearchableSelect
-                options={JURISDICTION_OPTIONS as unknown as any[]}
+                options={JURISDICTION_OPTIONS as unknown as {value: string; label: string}[]}
                 value={metadata.jurisdiction}
                 onValueChange={(value: string) =>
                   setMetadata(prev => ({ ...prev, jurisdiction: value as JurisdictionOption }))

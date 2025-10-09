@@ -132,7 +132,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
     document: null,
     isOpen: false
   })
-  const [selectedSearchSourceDocument, setSelectedSearchSourceDocument] = useState<Document | null>(null)
+  const [_selectedSearchSourceDocument, _setSelectedSearchSourceDocument] = useState<Document | null>(null)
 
   // Track when we last kicked the cron endpoint so we don't spam requests
   const [lastProcessingTrigger, setLastProcessingTrigger] = useState<number>(0)
@@ -443,6 +443,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
     pollStatuses() // Initial poll
 
     return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documents])
 
   // Automatically trigger the cron worker when queued documents are detected in development
@@ -635,7 +636,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
   // Refresh when trigger changes
   useEffect(() => {
     if (refreshTrigger > 0) {
-      console.log('📡 Refreshing document list after upload')
+      console.warn('📡 Refreshing document list after upload')
       fetchDocuments(false)
     }
   }, [refreshTrigger, fetchDocuments])
@@ -1137,7 +1138,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                       className={`group hover:shadow-md transition-all duration-200 ${
                         isSelectMode && selectedDocuments.has(document.id) ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-950/20' : ''
                       } ${
-                        selectedSearchSourceDocument?.id === document.id ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-950/20' : ''
+                        _selectedSearchSourceDocument?.id === document.id ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-950/20' : ''
                       }`} 
                       role="article" 
                       aria-labelledby={`document-title-${document.id}`}

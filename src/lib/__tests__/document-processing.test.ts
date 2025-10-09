@@ -24,7 +24,7 @@ vi.mock('@/lib/retry-logic', () => ({
     execute: vi.fn(async (fn) => {
       try {
         const res = await fn()
-        console.log('SmartRetry result:', res)
+        console.warn('SmartRetry result:', res)
         return {
           success: true,
           result: res,
@@ -45,7 +45,7 @@ vi.mock('@/lib/retry-logic', () => ({
     documentAI: {
       execute: vi.fn(async (fn) => {
         const res = await fn()
-        console.log('Circuit breaker result:', res)
+        console.warn('Circuit breaker result:', res)
         return res
       })
     }
@@ -171,7 +171,7 @@ describe('Document Processing', () => {
   describe('Sync Processing', () => {
     it('should successfully process a small document with sync processing', async () => {
       // Debug: Check what our mock actually returns
-      console.log('Mock returns:', await mockDocumentAI.processDocument({}))
+      console.warn('Mock returns:', await mockDocumentAI.processDocument({}))
       
       const result = await processDocument('doc-123')
 

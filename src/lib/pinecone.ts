@@ -4,12 +4,25 @@ import type {
   BusinessMetadata 
 } from '@/types/external-apis'
 
-// Simple Pinecone client without complex pooling
-const pinecone = new Pinecone({
-  apiKey: process.env['PINECONE_API_KEY']!,
-})
+// Lazy initialization to avoid errors during build
+let pinecone: Pinecone | null = null
+let index: ReturnType<Pinecone['Index']> | null = null
 
-const index = pinecone.Index(process.env['PINECONE_INDEX_NAME']!)
+function getPineconeClient() {
+  if (!pinecone) {
+    pinecone = new Pinecone({
+      apiKey: process.env['PINECONE_API_KEY']!,
+    })
+  }
+  return pinecone
+}
+
+function getPineconeIndex() {
+  if (!index) {
+    index = getPineconeClient().Index(process.env['PINECONE_INDEX_NAME']!)
+  }
+  return index
+}
 
 export interface SimilaritySearchResult {
   id: string
@@ -52,7 +65,7 @@ export async function indexDocumentInPinecone(
       sanitizedMetadata[key] = value as string | number | boolean
     }
 
-    await index.upsert([{
+    await getPineconeIndex().upsert([{
       id,
       values: vector,
       metadata: sanitizedMetadata
@@ -98,7 +111,7 @@ export async function searchSimilarDocuments(
       includeValues: false
     }
 
-    const queryResponse = await index.query(queryRequest)
+    const queryResponse = await getPineconeIndex().query(queryRequest)
     
     // Filter results by threshold and format
     const results = queryResponse.matches
@@ -143,7 +156,7 @@ export async function vectorSearch(
       includeValues: false
     }
 
-    const queryResponse = await index.query(queryRequest)
+    const queryResponse = await getPineconeIndex().query(queryRequest)
     
     // Filter and format results
     const results = queryResponse.matches
@@ -194,7 +207,7 @@ export async function deleteDocumentFromPinecone(documentId: string): Promise<vo
     }
 
     // 2. Delete vectors from Pinecone by ID using the v6 SDK
-    await index.deleteMany(vectorIds)
+    await getPineconeIndex().deleteMany(vectorIds)
     
     console.warn(`✅ Deleted ${vectorIds.length} vectors for document ${documentId} from Pinecone`)
   } catch (error) {
@@ -232,7 +245,7 @@ export async function updateDocumentMetadataInPinecone(
     const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
     
     // 2. Fetch the full vectors from Pinecone
-    const fetchResponse = await index.fetch(vectorIds)
+    const fetchResponse = await getPineconeIndex().fetch(vectorIds)
     const vectors = Object.values(fetchResponse.records)
 
     if (vectors.length === 0) {
@@ -254,7 +267,7 @@ export async function updateDocumentMetadataInPinecone(
     })
 
     // 4. Upsert the vectors back into Pinecone
-    await index.upsert(updatedVectors)
+    await getPineconeIndex().upsert(updatedVectors)
 
     console.warn(`✅ Successfully updated metadata for ${updatedVectors.length} vectors in Pinecone for document ${documentId}`)
     
@@ -274,7 +287,7 @@ async function getDocumentVector(documentId: string): Promise<number[] | null> {
     // Create a zero vector of dimension 1536 (OpenAI embedding dimension)
     const dummyVector = new Array(768).fill(0)
     
-    const queryResponse = await index.query({
+    const queryResponse = await getPineconeIndex().query({
       vector: dummyVector,
       topK: 1,
       filter: {
@@ -300,7 +313,7 @@ async function getDocumentVector(documentId: string): Promise<number[] | null> {
  */
 export async function getPineconeStats() {
   try {
-    const stats = await index.describeIndexStats()
+    const stats = await getPineconeIndex().describeIndexStats()
     return {
       totalVectorCount: stats.totalRecordCount,
       dimension: stats.dimension,

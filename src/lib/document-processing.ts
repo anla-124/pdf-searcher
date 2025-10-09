@@ -1548,7 +1548,7 @@ async function processBatchDocument(documentId: string): Promise<void> {
 /**
  * No cache invalidation needed in simplified architecture
  */
-async function invalidateDocumentCaches(documentId: string, userId: string): Promise<void> {
+async function invalidateDocumentCaches(documentId: string, _userId: string): Promise<void> {
   // No-op in simplified architecture
   logger.debug('Skipping cache invalidation in simplified architecture', { documentId })
 }

@@ -259,7 +259,7 @@ export class CircuitBreaker {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailTime > this.timeoutMs) {
         this.state = 'half-open'
-        console.log('🔄 Circuit breaker half-open, testing...')
+        console.warn('🔄 Circuit breaker half-open, testing...')
       } else {
         throw new Error('Circuit breaker is open - operation blocked')
       }
@@ -271,7 +271,7 @@ export class CircuitBreaker {
       if (this.state === 'half-open') {
         this.state = 'closed'
         this.failures = 0
-        console.log('✅ Circuit breaker closed - service recovered')
+        console.warn('✅ Circuit breaker closed - service recovered')
       }
       
       return result
@@ -281,7 +281,7 @@ export class CircuitBreaker {
       
       if (this.failures >= this.maxFailures) {
         this.state = 'open'
-        console.log(`🚨 Circuit breaker opened after ${this.failures} failures`)
+        console.warn(`🚨 Circuit breaker opened after ${this.failures} failures`)
       }
       
       throw error
@@ -300,7 +300,7 @@ export class CircuitBreaker {
     this.state = 'closed'
     this.failures = 0
     this.lastFailTime = 0
-    console.log('🔄 Circuit breaker manually reset')
+    console.warn('🔄 Circuit breaker manually reset')
   }
 }
 

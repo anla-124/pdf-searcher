@@ -54,7 +54,10 @@ interface UploadFile {
     isValid: boolean
     issues: string[]
     warnings: string[]
-    fileInfo: any
+    fileInfo: {
+      sizeFormatted: string
+      [key: string]: unknown
+    }
   }
 }
 
@@ -541,7 +544,7 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
                             Law Firm
                           </Label>
                           <SearchableSelect
-                            options={LAW_FIRM_OPTIONS as unknown as any[]}
+                            options={LAW_FIRM_OPTIONS as unknown as {value: string; label: string}[]}
                             value={uploadFile.metadata.law_firm}
                             onValueChange={(value: string) => 
                               updateFileMetadata(uploadFile.id, 'law_firm', value as LawFirmOption)
@@ -559,7 +562,7 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
                             Fund Manager
                           </Label>
                           <SearchableSelect
-                            options={FUND_MANAGER_OPTIONS as unknown as any[]}
+                            options={FUND_MANAGER_OPTIONS as unknown as {value: string; label: string}[]}
                             value={uploadFile.metadata.fund_manager}
                             onValueChange={(value: string) => 
                               updateFileMetadata(uploadFile.id, 'fund_manager', value as FundManagerOption)
@@ -577,7 +580,7 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
                             Fund Admin
                           </Label>
                           <SearchableSelect
-                            options={FUND_ADMIN_OPTIONS as unknown as any[]}
+                            options={FUND_ADMIN_OPTIONS as unknown as {value: string; label: string}[]}
                             value={uploadFile.metadata.fund_admin}
                             onValueChange={(value: string) => 
                               updateFileMetadata(uploadFile.id, 'fund_admin', value as FundAdminOption)
@@ -595,7 +598,7 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
                             Jurisdiction
                           </Label>
                           <SearchableSelect
-                            options={JURISDICTION_OPTIONS as unknown as any[]}
+                            options={JURISDICTION_OPTIONS as unknown as {value: string; label: string}[]}
                             value={uploadFile.metadata.jurisdiction}
                             onValueChange={(value: string) => 
                               updateFileMetadata(uploadFile.id, 'jurisdiction', value as JurisdictionOption)

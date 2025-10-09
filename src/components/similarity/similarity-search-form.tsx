@@ -11,11 +11,11 @@ import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { Search, Loader2, RotateCcw, X, Building, Users, Briefcase, Globe } from 'lucide-react'
 import { SimilarityResults } from './similarity-results'
-import { 
-  LAW_FIRM_OPTIONS, 
-  FUND_MANAGER_OPTIONS, 
-  FUND_ADMIN_OPTIONS, 
-  JURISDICTION_OPTIONS 
+import {
+  LAW_FIRM_OPTIONS,
+  FUND_MANAGER_OPTIONS,
+  FUND_ADMIN_OPTIONS,
+  JURISDICTION_OPTIONS,
 } from '@/lib/metadata-constants'
 
 interface SimilaritySearchFormProps {
@@ -25,6 +25,7 @@ interface SimilaritySearchFormProps {
 
 export function SimilaritySearchForm({ documentId, sourceDocument }: SimilaritySearchFormProps) {
   const [isSearching, setIsSearching] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [results, setResults] = useState<any[]>([])
   const [hasSearched, setHasSearched] = useState(false)
   const [filters, setFilters] = useState<SearchFilters>({
@@ -64,7 +65,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
       setResults(data.results)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('Search cancelled by user')
+        console.warn('Search cancelled by user')
         setResults([])
       } else {
         console.error('Similarity search error:', error)
@@ -201,11 +202,11 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Law Firm
                 </Label>
                 <SearchableMultiSelect
-                  options={LAW_FIRM_OPTIONS as unknown as any[]}
+                  options={LAW_FIRM_OPTIONS as unknown as {value: string; label: string}[]}
                   values={filters.law_firm || []}
-                  onValuesChange={(values) => 
-                    setFilters(prev => ({ 
-                      ...prev, 
+                  onValuesChange={(values) =>
+                    setFilters(prev => ({
+                      ...prev,
                       law_firm: values as any
                     }))
                   }
@@ -221,11 +222,11 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Fund Manager
                 </Label>
                 <SearchableMultiSelect
-                  options={FUND_MANAGER_OPTIONS as unknown as any[]}
+                  options={FUND_MANAGER_OPTIONS as unknown as {value: string; label: string}[]}
                   values={filters.fund_manager || []}
-                  onValuesChange={(values) => 
-                    setFilters(prev => ({ 
-                      ...prev, 
+                  onValuesChange={(values) =>
+                    setFilters(prev => ({
+                      ...prev,
                       fund_manager: values as any
                     }))
                   }
@@ -241,11 +242,11 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Fund Admin
                 </Label>
                 <SearchableMultiSelect
-                  options={FUND_ADMIN_OPTIONS as unknown as any[]}
+                  options={FUND_ADMIN_OPTIONS as unknown as {value: string; label: string}[]}
                   values={filters.fund_admin || []}
-                  onValuesChange={(values) => 
-                    setFilters(prev => ({ 
-                      ...prev, 
+                  onValuesChange={(values) =>
+                    setFilters(prev => ({
+                      ...prev,
                       fund_admin: values as any
                     }))
                   }
@@ -261,11 +262,11 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Jurisdiction
                 </Label>
                 <SearchableMultiSelect
-                  options={JURISDICTION_OPTIONS as unknown as any[]}
+                  options={JURISDICTION_OPTIONS as unknown as {value: string; label: string}[]}
                   values={filters.jurisdiction || []}
-                  onValuesChange={(values) => 
-                    setFilters(prev => ({ 
-                      ...prev, 
+                  onValuesChange={(values) =>
+                    setFilters(prev => ({
+                      ...prev,
                       jurisdiction: values as any
                     }))
                   }

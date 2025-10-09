@@ -65,20 +65,19 @@ export class HybridSearchEngine {
       businessContext
     } = options
 
-    console.log(`🔍 Starting hybrid search for: "${query}"`)
-    console.log(`📊 Configuration: semantic=${enableSemanticSearch}, keyword=${enableKeywordSearch}, hybrid=${enableHybridRanking}`)
+    console.warn(`🔍 Starting hybrid search for: "${query}"`)
+    console.warn(`📊 Configuration: semantic=${enableSemanticSearch}, keyword=${enableKeywordSearch}, hybrid=${enableHybridRanking}`)
 
     const algorithmsUsed: string[] = []
-    const allResults: SearchResult[] = []
 
     // 1. Semantic Vector Search
     let semanticResults: SearchResult[] = []
     if (enableSemanticSearch) {
       try {
-        console.log(`🧠 Performing semantic vector search...`)
+        console.warn(`🧠 Performing semantic vector search...`)
         semanticResults = await this.semanticVectorSearch(query, topK * 2, filters, userId)
         algorithmsUsed.push('semantic-vector')
-        console.log(`✅ Semantic search found ${semanticResults.length} results`)
+        console.warn(`✅ Semantic search found ${semanticResults.length} results`)
       } catch (error) {
         console.error('Semantic search failed:', error)
       }
@@ -88,10 +87,10 @@ export class HybridSearchEngine {
     let keywordResults: SearchResult[] = []
     if (enableKeywordSearch) {
       try {
-        console.log(`🔍 Performing keyword-based search...`)
+        console.warn(`🔍 Performing keyword-based search...`)
         keywordResults = await this.keywordSearch(query, topK * 2, filters, userId)
         algorithmsUsed.push('keyword-matching')
-        console.log(`✅ Keyword search found ${keywordResults.length} results`)
+        console.warn(`✅ Keyword search found ${keywordResults.length} results`)
       } catch (error) {
         console.error('Keyword search failed:', error)
       }
@@ -100,7 +99,7 @@ export class HybridSearchEngine {
     // 3. Combine and rank results
     let finalResults: SearchResult[]
     if (enableHybridRanking && semanticResults.length > 0 && keywordResults.length > 0) {
-      console.log(`🔀 Combining results with hybrid ranking...`)
+      console.warn(`🔀 Combining results with hybrid ranking...`)
       finalResults = this.hybridRanking(semanticResults, keywordResults, semanticWeight, keywordWeight)
       algorithmsUsed.push('hybrid-ranking')
     } else {
@@ -115,7 +114,7 @@ export class HybridSearchEngine {
     
     let rankedResults = uniqueResults
     if (enableAdvancedRanking) {
-      console.log(`🎯 Applying advanced ranking to ${uniqueResults.length} results...`)
+      console.warn(`🎯 Applying advanced ranking to ${uniqueResults.length} results...`)
       
       // Get user preferences for personalization
       const userPreferences = await AdvancedRankingEngine.getUserRankingPreferences(userId)
@@ -152,14 +151,14 @@ export class HybridSearchEngine {
       })
       
       algorithmsUsed.push('advanced-ranking')
-      console.log(`✅ Advanced ranking completed`)
+      console.warn(`✅ Advanced ranking completed`)
     }
     
     const topResults = rankedResults.slice(0, topK)
 
     const searchTime = Date.now() - startTime
-    console.log(`⚡ Hybrid search completed in ${searchTime}ms`)
-    console.log(`📈 Final results: ${topResults.length} documents`)
+    console.warn(`⚡ Hybrid search completed in ${searchTime}ms`)
+    console.warn(`📈 Final results: ${topResults.length} documents`)
 
     return {
       results: topResults,
@@ -244,7 +243,7 @@ export class HybridSearchEngine {
     const keywords = this.extractKeywords(query)
     const searchTerms = keywords.join(' | ') // OR search
     
-    console.log(`🔍 Keyword search terms: ${searchTerms}`)
+    console.warn(`🔍 Keyword search terms: ${searchTerms}`)
 
     // Build the query
     let queryBuilder = supabase

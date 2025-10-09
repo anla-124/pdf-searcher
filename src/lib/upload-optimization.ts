@@ -229,7 +229,7 @@ export async function queueDocumentProcessingJob(task: SimpleUploadTask): Promis
 }
 
 export async function processUploadedDocument(task: SimpleUploadTask): Promise<void> {
-  console.log(`📄 Processing document ${task.documentId}`)
+  console.warn(`📄 Processing document ${task.documentId}`)
 
   const jobId = task.jobId
   const sizeAnalysis = task.sizeAnalysis ?? analyzeDocumentSize(
@@ -277,7 +277,7 @@ export async function processUploadedDocument(task: SimpleUploadTask): Promise<v
       }
     }
 
-    console.log(`✅ Document ${task.documentId} processed successfully`)
+    console.warn(`✅ Document ${task.documentId} processed successfully`)
   } catch (error) {
     console.error(`❌ Document processing failed for ${task.documentId}:`, error)
 

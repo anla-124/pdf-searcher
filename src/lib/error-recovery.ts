@@ -50,7 +50,7 @@ export async function processWithRecovery<T>(
 
 export async function recoverFromError(
   error: Error,
-  context: any = {}
+  _context: Record<string, unknown> = {}
 ): Promise<{ recovered: boolean; strategy?: string }> {
   // Basic error recovery strategies
   if (error.message.includes('timeout')) {

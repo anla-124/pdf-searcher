@@ -124,7 +124,7 @@ export function VirtualDocumentList({
   ])
 
   // Scroll to specific document
-  const scrollToDocument = useCallback((documentId: string) => {
+  const _scrollToDocument = useCallback((documentId: string) => {
     const index = documents.findIndex(doc => doc.id === documentId)
     if (index !== -1 && scrollElementRef.current) {
       const targetScrollTop = index * itemHeight

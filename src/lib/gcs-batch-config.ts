@@ -19,7 +19,7 @@ export class GCSBatchManager {
     const gcsFileName = `${GCS_CONFIG.BATCH_INPUT_PREFIX}${documentId}/${filename}`
     const file = this.bucket.file(gcsFileName)
 
-    console.log(`Uploading document to GCS: gs://${GCS_CONFIG.BUCKET_NAME}/${gcsFileName}`)
+    console.warn(`Uploading document to GCS: gs://${GCS_CONFIG.BUCKET_NAME}/${gcsFileName}`)
 
     await file.save(fileBuffer, {
       metadata: {
@@ -37,7 +37,7 @@ export class GCSBatchManager {
 
   async downloadBatchResults(documentId: string): Promise<DocumentAIProcessResponse[]> {
     const outputPrefix = `${GCS_CONFIG.BATCH_OUTPUT_PREFIX}${documentId}/`
-    console.log(`Looking for batch results with prefix: ${outputPrefix}`)
+    console.warn(`Looking for batch results with prefix: ${outputPrefix}`)
 
     const [files] = await this.bucket.getFiles({
       prefix: outputPrefix,
@@ -47,7 +47,7 @@ export class GCSBatchManager {
 
     for (const file of files) {
       if (file.name.endsWith('.json')) {
-        console.log(`Downloading batch result: ${file.name}`)
+        console.warn(`Downloading batch result: ${file.name}`)
         const [content] = await file.download()
         const jsonContent = JSON.parse(content.toString())
         results.push(jsonContent)
@@ -58,7 +58,7 @@ export class GCSBatchManager {
   }
 
   async cleanupBatchFiles(documentId: string): Promise<void> {
-    console.log(`Cleaning up batch files for document: ${documentId}`)
+    console.warn(`Cleaning up batch files for document: ${documentId}`)
 
     // Delete input files
     const inputPrefix = `${GCS_CONFIG.BATCH_INPUT_PREFIX}${documentId}/`
@@ -66,7 +66,7 @@ export class GCSBatchManager {
     
     for (const file of inputFiles) {
       await file.delete()
-      console.log(`Deleted input file: ${file.name}`)
+      console.warn(`Deleted input file: ${file.name}`)
     }
 
     // Delete output files  
@@ -75,7 +75,7 @@ export class GCSBatchManager {
     
     for (const file of outputFiles) {
       await file.delete()
-      console.log(`Deleted output file: ${file.name}`)
+      console.warn(`Deleted output file: ${file.name}`)
     }
   }
 
@@ -99,9 +99,9 @@ export class GCSBatchManager {
       const hasResults = files.some(file => file.name.endsWith('.json'))
       
       if (hasResults) {
-        console.log(`Batch output exists for document: ${documentId}`)
+        console.warn(`Batch output exists for document: ${documentId}`)
       } else {
-        console.log(`No batch output found for document: ${documentId}`)
+        console.warn(`No batch output found for document: ${documentId}`)
       }
       
       return hasResults
@@ -124,7 +124,7 @@ export class GCSBatchManager {
       await testFile.save('test', { resumable: false })
       await testFile.delete()
       
-      console.log(`GCS bucket access verified: ${GCS_CONFIG.BUCKET_NAME}`)
+      console.warn(`GCS bucket access verified: ${GCS_CONFIG.BUCKET_NAME}`)
       return true
     } catch (error) {
       console.error('GCS bucket access check failed:', error)
