@@ -7,9 +7,9 @@ import { beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-// Test environment variables
+// Test environment variables - use production URL with MSW mocks
 ;(process.env as any)['NODE_ENV'] = 'integration'
-;(process.env as any)['NEXT_PUBLIC_SUPABASE_URL'] = process.env['TEST_SUPABASE_URL'] || 'http://localhost:54321'
+;(process.env as any)['NEXT_PUBLIC_SUPABASE_URL'] = process.env['TEST_SUPABASE_URL'] || 'https://bsthehpinjtiiznikbyw.supabase.co'
 ;(process.env as any)['NEXT_PUBLIC_SUPABASE_ANON_KEY'] = process.env['TEST_SUPABASE_ANON_KEY'] || 'test-anon-key'
 ;(process.env as any)['SUPABASE_SERVICE_ROLE_KEY'] = process.env['TEST_SUPABASE_SERVICE_KEY'] || 'test-service-key'
 ;(process.env as any)['UNLIMITED_PROCESSING'] = 'true'
