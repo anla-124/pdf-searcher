@@ -21,7 +21,8 @@ test.describe('PDF Searcher Document Workflow', () => {
 
   // Skip this test in CI since it requires OAuth authentication
   // TODO: Implement OAuth mocking for E2E tests
-  test.skip(!!process.env.CI, 'should complete basic document upload workflow', async ({ page }) => {
+  const skipInCI = !!process.env.CI
+  ;(skipInCI ? test.skip : test)('should complete basic document upload workflow', async ({ page }) => {
     // Step 1: Login/Authentication - OAuth flow (manual step in real test)
     // Note: In real E2E testing, OAuth would redirect to Google/GitHub
     // For this test, we assume user completes OAuth and gets redirected back
