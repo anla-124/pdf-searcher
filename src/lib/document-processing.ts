@@ -123,7 +123,6 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                 filename,
                 file_path,
                 file_size,
-                mime_type,
                 content_type,
                 status,
                 processing_error,
@@ -156,14 +155,14 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           documentId, 
           filename: document.filename,
           fileSize: document.file_size,
-          mimeType: document.mime_type 
+          mimeType: document.content_type
         })
 
         // ENTERPRISE PHASE 1.3: Analyze document size and determine optimal processing strategy
         const sizeAnalysis = analyzeDocumentSize(
-          document.file_size, 
-          document.filename, 
-          document.mime_type
+          document.file_size,
+          document.filename,
+          document.content_type
         )
         
         const timeEstimate = estimateProcessingTime(sizeAnalysis)
