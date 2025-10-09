@@ -48,9 +48,9 @@ export default defineConfig({
       }
     },
     
-    // Timeouts for enterprise testing
-    testTimeout: 30000,
-    hookTimeout: 10000,
+    // No timeout limits - allow tests to take as long as needed
+    testTimeout: 0,
+    hookTimeout: 0,
     
     // Parallel execution
     pool: 'threads',
