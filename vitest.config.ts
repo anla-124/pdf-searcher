@@ -48,9 +48,9 @@ export default defineConfig({
       }
     },
     
-    // No timeout limits - allow tests to take as long as needed
-    testTimeout: 0,
-    hookTimeout: 0,
+    // Generous timeouts for complex tests
+    testTimeout: 300000, // 5 minutes
+    hookTimeout: 60000, // 1 minute
     
     // Parallel execution
     pool: 'threads',

@@ -22,9 +22,9 @@ export default defineConfig({
       'tests/e2e/**/*'
     ],
     
-    // No timeout limits - allow integration tests to take as long as needed
-    testTimeout: 0,
-    hookTimeout: 0,
+    // Generous timeouts for integration tests
+    testTimeout: 600000, // 10 minutes for document processing
+    hookTimeout: 120000, // 2 minutes
     
     // Sequential execution for integration tests (avoid conflicts)
     pool: 'threads',
