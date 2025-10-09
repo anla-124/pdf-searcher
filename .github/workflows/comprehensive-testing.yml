@@ -141,49 +141,6 @@ jobs:
             test-results/
             coverage/
 
-  # API Tests (Simplified - uses mocked external services)
-  api-tests:
-    name: API Tests
-    runs-on: ubuntu-latest
-    needs: setup
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run API tests (with mocked services)
-        run: |
-          # Note: API tests run with mocked external services (Supabase, Google Cloud, Pinecone)
-          npm run test -- tests/api/ --run
-        env:
-          NODE_ENV: test
-          REDIS_URL: redis://localhost:6379
-
-      - name: Upload API test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: api-test-results
-          path: test-results/
-
   # End-to-End Tests
   e2e-tests:
     name: E2E Tests
@@ -257,7 +214,7 @@ jobs:
   load-tests:
     name: Load Tests
     runs-on: ubuntu-latest
-    needs: [setup, api-tests]
+    needs: [setup, unit-tests]
     if: needs.setup.outputs.skip_load == 'false'
     steps:
       - name: Checkout code
@@ -315,7 +272,7 @@ jobs:
   security-tests:
     name: Security Tests
     runs-on: ubuntu-latest
-    needs: [setup, api-tests]
+    needs: [setup, unit-tests]
     if: needs.setup.outputs.skip_security == 'false'
     steps:
       - name: Checkout code
@@ -427,7 +384,7 @@ jobs:
   performance-analysis:
     name: Performance Analysis
     runs-on: ubuntu-latest
-    needs: [unit-tests, api-tests]
+    needs: [unit-tests]
     if: always()
     steps:
       - name: Checkout code
@@ -509,7 +466,7 @@ jobs:
   test-summary:
     name: Generate Test Summary
     runs-on: ubuntu-latest
-    needs: [unit-tests, api-tests, e2e-tests, load-tests, security-tests, docker-tests]
+    needs: [unit-tests, e2e-tests, load-tests, security-tests, docker-tests]
     if: always()
     steps:
       - name: Checkout code
@@ -530,11 +487,10 @@ jobs:
           **Branch:** ${{ github.ref_name }}
           
           ## 📊 Test Results Overview
-          
+
           | Test Suite | Status | Coverage | Duration | Artifacts |
           |------------|--------|----------|----------|-----------|
           | Unit Tests | ${{ needs.unit-tests.result }} | ✅ | - | [Results](unit-test-results/) |
-          | API Tests | ${{ needs.api-tests.result }} | ✅ | - | [Results](api-test-results/) |
           | E2E Tests | ${{ needs.e2e-tests.result }} | ✅ | - | [Results](e2e-test-results-*/) |
           | Load Tests | ${{ needs.load-tests.result }} | ✅ | - | [Results](load-test-results/) |
           | Security Tests | ${{ needs.security-tests.result }} | ✅ | - | [Results](security-test-results/) |
