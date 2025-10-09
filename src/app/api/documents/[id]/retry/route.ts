@@ -60,8 +60,18 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to fetch document' }, { status: 500 })
     }
 
-    if (document.status !== 'error') {
-      return NextResponse.json({ error: 'Document is not in an error state' }, { status: 400 })
+    // Allow retry for:
+    // 1. Documents with status 'error'
+    // 2. Documents with status 'completed' but embeddings_skipped: true
+    const hasEmbeddingsSkipped = document.metadata &&
+                                 typeof document.metadata === 'object' &&
+                                 'embeddings_skipped' in document.metadata &&
+                                 document.metadata.embeddings_skipped === true
+
+    if (document.status !== 'error' && !hasEmbeddingsSkipped) {
+      return NextResponse.json({
+        error: 'Document must be in error state or have failed embeddings to retry'
+      }, { status: 400 })
     }
 
     const cleanedMetadata: Record<string, unknown> | null = document.metadata ? { ...document.metadata } : null
