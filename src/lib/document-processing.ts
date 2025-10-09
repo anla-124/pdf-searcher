@@ -123,6 +123,7 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                 filename,
                 file_path,
                 file_size,
+                mime_type,
                 content_type,
                 status,
                 processing_error,
