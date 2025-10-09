@@ -133,9 +133,9 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                 updated_at,
                 document_content(extracted_text)
               `)
-              .returns<DatabaseDocumentWithContent>()
               .eq('id', documentId)
-              .single();
+              .single()
+              .returns<DatabaseDocumentWithContent>();
         
             const document: DatabaseDocumentWithContent | null = data;
             const fetchError: any = error;
@@ -146,7 +146,7 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
 
         // Flatten extracted_text from document_content
         if (document.document_content && document.document_content.length > 0) {
-          document.extracted_text = document.document_content[0].extracted_text;
+          document.extracted_text = document.document_content[0]?.extracted_text ?? '';
           delete document.document_content;
         } else {
           document.extracted_text = ''; // Ensure it's always a string
@@ -339,7 +339,7 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                   name,
                   type: `${optimalProcessor}-chunked`
                 },
-                estimatedProcessingSeconds: timeEstimate.estimatedSeconds
+                estimatedProcessingSeconds: timeEstimate.estimatedMinutes * 60
               }
 
               if (excludedSection) {
@@ -376,7 +376,7 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                     name,
                     type: optimalProcessor
                   },
-                  estimatedProcessingSeconds: timeEstimate.estimatedSeconds
+                  estimatedProcessingSeconds: timeEstimate.estimatedMinutes * 60
                 }
                 return { switchedToBatch: true, metrics: fallbackMetrics }
               } catch (batchError) {
@@ -447,7 +447,7 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
             name,
             type: optimalProcessor
           },
-          estimatedProcessingSeconds: timeEstimate.estimatedSeconds
+          estimatedProcessingSeconds: timeEstimate.estimatedMinutes * 60
         }
 
         if (excludedSection) {
@@ -575,8 +575,8 @@ function extractStructuredFields(document: DocumentAIDocument, pageOffset: numbe
         }
       }
 
-      if (page.keyValuePairs) {
-        for (const kvp of page.keyValuePairs) {
+      if ((page as any).keyValuePairs) {
+        for (const kvp of (page as any).keyValuePairs) {
           const keyText = getTextFromTextAnchor(fullText, kvp.key?.textAnchor)
           const valueText = getTextFromTextAnchor(fullText, kvp.value?.textAnchor)
 
@@ -1417,13 +1417,15 @@ async function generateEmbeddingsFromPages(
         failedChunks.map(pagedChunk => processChunkWithRetry(documentId, pagedChunk, businessMetadata, filename))
       );
 
-      const newFailedChunks = [];
+      const newFailedChunks: typeof failedChunks = [];
       results.forEach((result, index) => {
         if (result.status === 'rejected') {
           const failedChunk = failedChunks[index];
-          newFailedChunks.push(failedChunk);
+          if (failedChunk) {
+            newFailedChunks.push(failedChunk);
+          }
           logger.warn('Chunk processing failed, will retry.', {
-            chunkIndex: failedChunk.chunkIndex,
+            chunkIndex: failedChunk?.chunkIndex,
             error: result.reason?.message,
             documentId,
             attempt: attempts + 1
@@ -1436,11 +1438,14 @@ async function generateEmbeddingsFromPages(
     }
 
     if (failedChunks.length > 0) {
-      logger.error(`Failed to process ${failedChunks.length} chunks after ${MAX_CHUNK_RETRIES} attempts. Aborting document processing.`, { 
-        documentId,
-        failedChunkIndexes: failedChunks.map(c => c.chunkIndex)
-      });
-      throw new Error(`Failed to process ${failedChunks.length} chunks after multiple retries.`);
+      const failedChunkIndexes = failedChunks.map(c => c.chunkIndex);
+      logger.error(`Failed to process ${failedChunks.length} chunks after ${MAX_CHUNK_RETRIES} attempts. Aborting document processing.`, {
+        documentId: documentId,
+        failedChunkIndexes: failedChunkIndexes
+      } as any);
+      const error = new Error(`Failed to process ${failedChunks.length} chunks after multiple retries.`) as Error & { documentId?: string };
+      error.documentId = documentId;
+      throw error;
     }
 
     if (i + batchSize < pagedChunks.length) {

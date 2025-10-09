@@ -177,7 +177,7 @@ export async function queueDocumentProcessingJob(task: SimpleUploadTask): Promis
       filename: task.filename,
       file_size: task.fileSize,
       estimated_minutes: estimated.estimatedMinutes,
-      estimated_seconds: estimated.estimatedSeconds,
+      estimated_seconds: estimated.estimatedMinutes * 60,
       tier: sizeAnalysis.tier
     }
   }

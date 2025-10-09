@@ -80,7 +80,6 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('documents')
       .select(selectClause)
-      .returns<DatabaseDocumentWithContent[]>()
       .eq('user_id', user.id)
 
     // Apply filters
@@ -91,19 +90,19 @@ export async function GET(request: NextRequest) {
     if (search) {
       query = query.or(`title.ilike.%${search}%,filename.ilike.%${search}%`)
     }
-    
+
     // Apply pagination with proper sorting
     query = DatabasePagination.applyPagination(query, paginationParams)
 
     const startTime = Date.now()
-    
+
     // Execute both queries concurrently for better performance
     const [documentsResult, countResult] = await Promise.all([
       query,
       countQuery
     ])
-    
-    const { data: documents, error: dbError } = documentsResult
+
+    const { data: documents, error: dbError } = documentsResult as { data: DatabaseDocumentWithContent[] | null; error: any }
     const { count } = countResult
 
     if (dbError) {
@@ -118,11 +117,11 @@ export async function GET(request: NextRequest) {
     const queryTime = Date.now() - startTime
     
     // Flatten extracted_text from document_content for each document
-    const flattenedDocuments = documents?.map(doc => {
+    const flattenedDocuments = documents?.map((doc: DatabaseDocumentWithContent) => {
       if (doc.document_content && doc.document_content.length > 0) {
         return {
           ...doc,
-          extracted_text: doc.document_content[0].extracted_text,
+          extracted_text: doc.document_content[0]?.extracted_text ?? '',
           document_content: undefined // Remove the nested object
         }
       }

@@ -40,7 +40,7 @@ export async function GET(
     }
 
     if (document.document_content && document.document_content.length > 0) {
-      document.extracted_text = document.document_content[0].extracted_text
+      document.extracted_text = document.document_content[0]?.extracted_text ?? ''
       delete document.document_content
     }
 
@@ -175,7 +175,7 @@ export async function PATCH(
 
     // Flatten extracted_text from document_content
     if (existingDocument.document_content && existingDocument.document_content.length > 0) {
-      existingDocument.extracted_text = existingDocument.document_content[0].extracted_text;
+      existingDocument.extracted_text = existingDocument.document_content[0]?.extracted_text ?? '';
       delete existingDocument.document_content;
     } else {
       existingDocument.extracted_text = ''; // Ensure it's always a string
@@ -265,7 +265,7 @@ export async function PATCH(
     await activityLogger.logActivity({
       userId: user.id,
       userEmail: user.email || '',
-      action: 'update',
+      action: 'upload',
       resourceType: 'document',
       resourceId: id,
       resourceName: title || existingDocument.title || 'Unknown',
