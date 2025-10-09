@@ -134,8 +134,7 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                 document_content(extracted_text)
               `)
               .eq('id', documentId)
-              .single()
-              .returns<DatabaseDocumentWithContent>();
+              .single();
         
             const document: DatabaseDocumentWithContent | null = data;
             const fetchError: any = error;
