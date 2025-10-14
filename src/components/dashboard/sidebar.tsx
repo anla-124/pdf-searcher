@@ -10,12 +10,14 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import type { ComponentType, SVGProps } from 'react'
+import { clientLogger } from '@/lib/client-logger'
 
 // Type definition for navigation items
 type NavigationItem = {
   name: string
   href: string
-  icon: any
+  icon: ComponentType<SVGProps<SVGSVGElement>>
   badge?: string
 }
 
@@ -52,7 +54,7 @@ export function Sidebar() {
       await supabase.auth.signOut()
       router.push('/login')
     } catch (error) {
-      console.error('Error logging out:', error)
+      clientLogger.error('Error logging out', error)
     } finally {
       setIsLoading(false)
     }

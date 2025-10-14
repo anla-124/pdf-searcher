@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { deleteDocumentFromPinecone, updateDocumentMetadataInPinecone } from '@/lib/pinecone'
 import { activityLogger } from '@/lib/activity-logger'
 import { DatabaseDocumentWithContent } from '@/types/external-apis'
+import { logger } from '@/lib/logger'
 
 export async function GET(
   request: NextRequest,
@@ -31,7 +32,7 @@ export async function GET(
       if (dbError.code === 'PGRST116') {
         return NextResponse.json({ error: 'Document not found' }, { status: 404 })
       }
-      console.error('Database error:', dbError)
+      logger.error('Documents API: database error', dbError)
       return NextResponse.json({ error: 'Failed to fetch document' }, { status: 500 })
     }
 
@@ -47,7 +48,7 @@ export async function GET(
     return NextResponse.json(document)
 
   } catch (error) {
-    console.error('Document fetch error:', error)
+    logger.error('Documents API: document fetch error', error instanceof Error ? error : new Error(String(error)))
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
@@ -87,15 +88,19 @@ export async function DELETE(
       .remove([document.file_path])
 
     if (storageError) {
-      console.error('Storage deletion error:', storageError)
+      logger.error('Documents API: storage deletion error', storageError)
     }
 
     // Delete from Pinecone first (before database, in case we need to rollback)
     try {
       await deleteDocumentFromPinecone(id)
-      console.warn(`Deleted vectors for document ${id} from Pinecone`)
+      logger.info('Documents API: deleted vectors from Pinecone', { documentId: id })
     } catch (pineconeError) {
-      console.error('Pinecone deletion error:', pineconeError)
+      logger.error(
+        'Documents API: Pinecone deletion error',
+        pineconeError instanceof Error ? pineconeError : new Error(String(pineconeError)),
+        { documentId: id }
+      )
       // Continue with deletion even if Pinecone fails - we'll clean up stale vectors later
     }
 
@@ -107,7 +112,7 @@ export async function DELETE(
       .eq('user_id', user.id)
 
     if (deleteError) {
-      console.error('Database deletion error:', deleteError)
+      logger.error('Documents API: database deletion error', deleteError)
       return NextResponse.json({ error: 'Failed to delete document' }, { status: 500 })
     }
 
@@ -124,11 +129,11 @@ export async function DELETE(
       statusCode: 200
     }, request)
 
-    console.warn(`✅ Document ${id} deleted successfully`)
+    logger.info('Documents API: document deleted successfully', { documentId: id })
     return NextResponse.json({ message: 'Document deleted successfully' })
 
   } catch (error) {
-    console.error('Document deletion error:', error)
+    logger.error('Documents API: document deletion error', error instanceof Error ? error : new Error(String(error)))
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
@@ -147,7 +152,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json()
+    const body = await request.json() as {
+      metadata?: Record<string, unknown>
+      title?: string
+    }
     const { metadata, title } = body
 
     if (!metadata && !title) {
@@ -182,7 +190,7 @@ export async function PATCH(
     }
 
     // Prepare for a full rename operation: storage, database, and metadata
-    const updateData: any = {
+    const updateData: Record<string, unknown> = {
       updated_at: new Date().toISOString()
     }
 
@@ -198,7 +206,7 @@ export async function PATCH(
         .move(existingDocument.file_path, newFilepath)
 
       if (moveError) {
-        console.error('Storage file move error:', moveError)
+        logger.error('Documents API: storage file move error', moveError)
         return NextResponse.json({ error: 'Failed to rename document in storage.' }, { status: 500 })
       }
 
@@ -233,14 +241,17 @@ export async function PATCH(
     // Update Pinecone vector metadata if title or metadata changed
     if (title || metadata) {
       try {
-        const pineconeMetadata: any = {}
+        const pineconeMetadata: Record<string, unknown> = {}
         
         if (title) {
           // The new filename is derived from the new title
           const newFilename = `${title}.pdf`
           pineconeMetadata.filename = newFilename
           pineconeMetadata.original_filename = newFilename
-          console.warn(`Preparing to update Pinecone metadata with new filename: ${newFilename}`)
+          logger.info('Documents API: preparing Pinecone metadata filename update', {
+            documentId: id,
+            newFilename
+          })
         }
         
         // If business metadata changed, include those updates too
@@ -249,13 +260,17 @@ export async function PATCH(
           if (metadata.fund_manager) pineconeMetadata.fund_manager = metadata.fund_manager
           if (metadata.fund_admin) pineconeMetadata.fund_admin = metadata.fund_admin
           if (metadata.jurisdiction) pineconeMetadata.jurisdiction = metadata.jurisdiction
-          console.warn(`Updating Pinecone metadata for document ${id} with business metadata`)
+          logger.info('Documents API: updating Pinecone business metadata', { documentId: id })
         }
         
         await updateDocumentMetadataInPinecone(id, pineconeMetadata)
-        console.warn(`✅ Successfully updated Pinecone metadata for document ${id}`)
+        logger.info('Documents API: Pinecone metadata updated', { documentId: id })
       } catch (pineconeError) {
-        console.error('Pinecone metadata update error (non-fatal):', pineconeError)
+        logger.error(
+          'Documents API: Pinecone metadata update error (non-fatal)',
+          pineconeError instanceof Error ? pineconeError : new Error(String(pineconeError)),
+          { documentId: id }
+        )
         // Don't fail the entire request if Pinecone update fails
         // The database update was successful, which is the primary concern
       }
@@ -275,11 +290,11 @@ export async function PATCH(
       statusCode: 200
     }, request)
 
-    console.warn(`✅ Document ${id} updated successfully`)
+    logger.info('Documents API: document updated successfully', { documentId: id })
     return NextResponse.json(updatedDocument)
 
   } catch (error) {
-    console.error('Document update error:', error)
+    logger.error('Documents API: document update error', error instanceof Error ? error : new Error(String(error)))
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

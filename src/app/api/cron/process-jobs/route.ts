@@ -1,8 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { processDocument } from '@/lib/document-processing'
 import { batchProcessor } from '@/lib/document-ai-batch'
 import { logger, withRequestContext, generateCorrelationId } from '@/lib/logger'
+
+type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
+
+type ProcessingMethod = 'sync' | 'batch'
+
+interface DocumentJobJoin {
+  id: string
+  title: string | null
+  filename: string | null
+  file_path: string
+  file_size: number
+  user_id: string
+}
+
+interface DocumentJobRecord {
+  id: string
+  document_id: string
+  user_id: string
+  status: JobStatus
+  attempts: number
+  processing_method?: ProcessingMethod | null
+  batch_operation_id?: string | null
+  documents?: DocumentJobJoin[] | DocumentJobJoin | null
+}
+
+type ServiceSupabase = SupabaseClient<Record<string, unknown>>
+
+interface QueueStatRecord {
+  status: JobStatus
+  created_at: string
+}
 
 // Always try sync processing first - no estimation needed
 function needsBatchProcessing(fileSize: number, filename: string): boolean {
@@ -20,7 +52,10 @@ function needsBatchProcessing(fileSize: number, filename: string): boolean {
 }
 
 // Extract job processing logic into a separate function
-async function processJob(supabase: any, job: any) {
+async function processJob(
+  supabase: ServiceSupabase,
+  job: DocumentJobRecord
+) {
   logger.info('Processing job', { 
     jobId: job.id, 
     documentId: job.document_id, 
@@ -68,7 +103,9 @@ async function processJob(supabase: any, job: any) {
     try {
       // OPTIMIZED: Document should always be available from JOIN, no fallback needed
       const joinedDocument = job.documents
-      let document = Array.isArray(joinedDocument) ? joinedDocument[0] : joinedDocument
+      let document: DocumentJobJoin | null = Array.isArray(joinedDocument)
+        ? joinedDocument[0] ?? null
+        : joinedDocument ?? null
       
       if (!document) {
         // Debug: Check if document exists independently
@@ -119,8 +156,11 @@ async function processJob(supabase: any, job: any) {
           })
           
           // CRITICAL FIX: Use the direct document if it exists
-          console.warn('🔧 Using direct document lookup as workaround for JOIN issue')
-          const workingDocument = {
+          logger.warn('Using direct document lookup as workaround for JOIN issue', {
+            jobId: job.id,
+            documentId: job.document_id
+          })
+          const workingDocument: DocumentJobJoin = {
             id: directDocument.id,
             title: directDocument.title,
             filename: directDocument.title, // Use title as fallback
@@ -144,14 +184,21 @@ async function processJob(supabase: any, job: any) {
         }
       }
 
+      if (!document) {
+        throw new Error(`Document metadata unavailable for job ${job.id}`)
+      }
+
       // Determine processing method if not already set
-      let processingMethod = job.processing_method
+      let processingMethod = job.processing_method ?? null
       if (!processingMethod || processingMethod === 'sync') {
         // For already processing jobs, check if they have batch_operation_id to determine method
         if (job.status === 'processing' && job.batch_operation_id) {
           processingMethod = 'batch'
         } else {
-          const shouldUseBatch = needsBatchProcessing(document.file_size, document.filename)
+          const shouldUseBatch = needsBatchProcessing(
+            document.file_size,
+            document.filename ?? document.title ?? 'document.pdf'
+          )
           processingMethod = shouldUseBatch ? 'batch' : 'sync'
         }
         
@@ -256,10 +303,47 @@ async function processJob(supabase: any, job: any) {
         }
       } else {
         // Handle synchronous processing
-        logger.info('Starting synchronous processing', { 
-          jobId: job.id, 
-          documentId: job.document_id 
+        logger.info('Starting synchronous processing', {
+          jobId: job.id,
+          documentId: job.document_id
         })
+
+        // Check if document was cancelled before processing
+        const { data: docCheck, error: docCheckError } = await supabase
+          .from('documents')
+          .select('status')
+          .eq('id', job.document_id)
+          .single()
+
+        if (docCheckError) {
+          logger.error('Failed to verify document status before processing', docCheckError, {
+            jobId: job.id,
+            documentId: job.document_id
+          })
+        }
+
+        if (docCheck?.status === 'cancelled') {
+          logger.info('Document cancelled before processing started', {
+            jobId: job.id,
+            documentId: job.document_id
+          })
+
+          // Mark job as cancelled
+          await supabase
+            .from('document_jobs')
+            .update({
+              status: 'cancelled',
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', job.id)
+
+          return {
+            message: 'Job cancelled before processing',
+            jobId: job.id,
+            documentId: job.document_id
+          }
+        }
+
         const processingStartedAt = Date.now()
         const result = await processDocument(job.document_id)
 
@@ -397,7 +481,7 @@ export async function GET(request: NextRequest) {
     path: '/api/cron/process-jobs',
     method: 'GET'
   }, async () => {
-    let supabase: any = null
+    let supabase: ServiceSupabase | null = null
     
     try {
       logger.info('Cron job started', { 
@@ -456,7 +540,11 @@ export async function GET(request: NextRequest) {
     
     // UNLIMITED MODE: Never block processing
     if (!unlimitedMode && availableSlots === 0) {
-      console.warn('⏸️ All processing slots occupied, waiting for completion...')
+      logger.warn('All processing slots occupied, waiting for completion', {
+        currentProcessing,
+        maxConcurrent: maxConcurrentDocs,
+        component: 'cron-job'
+      })
       return NextResponse.json({ 
         message: 'All processing slots occupied',
         currentProcessing,
@@ -494,9 +582,10 @@ export async function GET(request: NextRequest) {
       .order('priority', { ascending: false })
       .order('created_at', { ascending: true })
       .limit(unlimitedMode ? 1000 : availableSlots * 2) // UNLIMITED: Process up to 1000 jobs per batch
+      .returns<DocumentJobRecord[]>()
 
     if (jobsError) {
-      console.error('Error fetching jobs with JOIN:', jobsError)
+      logger.error('Error fetching jobs with JOIN', jobsError, { component: 'cron-job' })
       
       // Fallback: Try to get jobs without JOIN to debug RLS issue
       const { data: fallbackJobs, error: fallbackError } = await supabase
@@ -505,7 +594,7 @@ export async function GET(request: NextRequest) {
         .in('status', ['queued', 'processing'])
         .limit(5)
       
-      console.warn('🔍 Fallback query results:', {
+      logger.warn('Fallback document job query results', {
         fallbackJobs: fallbackJobs?.length || 0,
         fallbackError: fallbackError?.message,
         sampleJob: fallbackJobs?.[0]
@@ -515,7 +604,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!jobs || jobs.length === 0) {
-      console.warn('📭 No queued or processing jobs found')
+      logger.info('No queued or processing jobs found', { component: 'cron-job' })
       
       // Enhanced queue monitoring for enterprise scale
       const { data: queueStats } = await supabase
@@ -523,18 +612,22 @@ export async function GET(request: NextRequest) {
         .select('status, created_at')
         .order('created_at', { ascending: false })
         .limit(50)
+        .returns<QueueStatRecord[]>()
       
       const stats = {
         total: queueStats?.length || 0,
-        queued: queueStats?.filter((j: any) => j.status === 'queued').length || 0,
-        processing: queueStats?.filter((j: any) => j.status === 'processing').length || 0,
-        completed: queueStats?.filter((j: any) => j.status === 'completed').length || 0,
-        failed: queueStats?.filter((j: any) => j.status === 'failed').length || 0,
-        cancelled: queueStats?.filter((j: any) => j.status === 'cancelled').length || 0
+        queued: queueStats?.filter((j: QueueStatRecord) => j.status === 'queued').length || 0,
+        processing: queueStats?.filter((j: QueueStatRecord) => j.status === 'processing').length || 0,
+        completed: queueStats?.filter((j: QueueStatRecord) => j.status === 'completed').length || 0,
+        failed: queueStats?.filter((j: QueueStatRecord) => j.status === 'failed').length || 0,
+        cancelled: queueStats?.filter((j: QueueStatRecord) => j.status === 'cancelled').length || 0
       }
       
-      console.warn('📊 Queue Status:', stats)
-      console.warn(`⚡ System ready for ${unlimitedMode ? 'UNLIMITED' : 'enterprise-scale'} processing${unlimitedMode ? '' : ' (up to ' + maxConcurrentDocs + ' concurrent jobs)'}`)
+      logger.info('Queue status snapshot', {
+        stats,
+        maxConcurrency: unlimitedMode ? 'unlimited' : maxConcurrentDocs,
+        component: 'cron-job'
+      })
       
       return NextResponse.json({ 
         message: 'No jobs to process',
@@ -544,18 +637,30 @@ export async function GET(request: NextRequest) {
       }, { status: 200 })
     }
 
-    console.warn(`🚀 Found ${jobs.length} job(s) to process`)
-    console.warn(`⚡ ${unlimitedMode ? 'UNLIMITED' : 'Enterprise-scale'} processing: ${unlimitedMode ? '∞' : availableSlots} available slots`)
+    logger.info('Jobs ready for processing', {
+      jobCount: jobs.length,
+      availableSlots: unlimitedMode ? 'unlimited' : availableSlots,
+      unlimitedMode,
+      component: 'cron-job'
+    })
     if (!unlimitedMode) {
-      console.warn(`📊 System capacity: ${currentProcessing + jobs.length}/${maxConcurrentDocs} (${Math.round((currentProcessing + jobs.length)/maxConcurrentDocs*100)}% utilization)`)
+      logger.info('System capacity utilization', {
+        processedPlusQueue: currentProcessing + jobs.length,
+        maxConcurrent: maxConcurrentDocs,
+        utilization: Math.round((currentProcessing + jobs.length) / maxConcurrentDocs * 100),
+        component: 'cron-job'
+      })
     } else {
-      console.warn(`📊 UNLIMITED MODE: Processing ${currentProcessing + jobs.length} concurrent jobs with no limits`)
+      logger.info('Unlimited mode processing summary', {
+        concurrentJobs: currentProcessing + jobs.length,
+        component: 'cron-job'
+      })
     }
     
     const processingStartTime = Date.now()
     
     // Process jobs concurrently with Promise.allSettled to avoid failing all on one error
-    const jobPromises = jobs.map((job: any) => processJob(supabase, job))
+    const jobPromises = jobs.map((job) => processJob(supabase, job))
     const results = await Promise.allSettled(jobPromises)
     
     // Analyze results with enhanced metrics
@@ -564,12 +669,26 @@ export async function GET(request: NextRequest) {
     const processingTime = Date.now() - processingStartTime
     const throughput = jobs.length / (processingTime / 1000) // jobs per second
     
-    console.warn(`✅ Processing complete: ${successful} successful, ${failed} failed`)
-    console.warn(`⚡ Processing time: ${processingTime}ms (${throughput.toFixed(2)} jobs/sec)`)
+    logger.info('Job processing batch complete', {
+      totalJobs: jobs.length,
+      successful,
+      failed,
+      processingTimeMs: processingTime,
+      throughputJobsPerSec: parseFloat(throughput.toFixed(2)),
+      component: 'cron-job'
+    })
     if (!unlimitedMode) {
-      console.warn(`📈 System capacity utilization: ${jobs.length}/${maxConcurrentDocs} slots (${Math.round(jobs.length/maxConcurrentDocs*100)}%)`)
+      logger.info('Capacity utilization after processing', {
+        processedJobs: jobs.length,
+        maxConcurrent: maxConcurrentDocs,
+        utilization: Math.round(jobs.length / maxConcurrentDocs * 100),
+        component: 'cron-job'
+      })
     } else {
-      console.warn(`📈 UNLIMITED MODE: Processed ${jobs.length} jobs simultaneously`)
+      logger.info('Unlimited mode batch throughput', {
+        processedJobs: jobs.length,
+        component: 'cron-job'
+      })
     }
     
     return NextResponse.json({

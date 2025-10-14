@@ -43,7 +43,7 @@ export interface ActivityLogEntry {
   resourceName?: string
   
   // Context and metadata
-  details?: Record<string, any>
+  details?: Record<string, unknown>
   endpoint?: string
   method?: string
   statusCode?: number
@@ -70,6 +70,41 @@ export interface ActivityStats {
   searches: number
   downloads: number
   avgDurationMs: number
+}
+
+interface ActivityLogRecord {
+  user_uuid: string | null
+  email: string | null
+  ip_address: string | null
+  user_agent: string | null
+  action_type: ActivityAction
+  resource_type: ResourceType
+  resource_uuid: string | null
+  resource_name: string | null
+  metadata: Record<string, unknown> | null
+  api_endpoint: string | null
+  http_method: string | null
+  response_status: number | null
+  duration_ms: number | null
+  logged_at: string
+}
+
+interface ActivitySummaryRow {
+  user_uuid: string | null
+  email: string | null
+  action_type: ActivityAction
+  logged_at: string
+}
+
+interface ActivityStatRow {
+  action_type: ActivityAction
+  user_uuid: string | null
+  duration_ms: number | null
+}
+
+interface DailyActivityRow {
+  action_type: ActivityAction
+  logged_at: string
 }
 
 export class ActivityLogger {
@@ -168,7 +203,12 @@ export class ActivityLogger {
           component: 'activity-logger'
         })
       } else {
-        const logData: { action: any; resourceType: any; component: string; userId?: string } = {
+        const logData: {
+          action: ActivityAction
+          resourceType: ResourceType
+          component: string
+          userId?: string
+        } = {
           action: entry.action,
           resourceType: entry.resourceType,
           component: 'activity-logger'
@@ -188,7 +228,7 @@ export class ActivityLogger {
   }
 
   // Get recent activities
-  async getRecentActivities(filter: ActivityFilter = {}): Promise<any[]> {
+  async getRecentActivities(filter: ActivityFilter = {}): Promise<ActivityLogRecord[]> {
     try {
       const supabase = await createServiceClient()
       
@@ -225,7 +265,7 @@ export class ActivityLogger {
         .order('logged_at', { ascending: false })
         .range(offset, offset + limit - 1)
 
-      const { data, error } = await query
+      const { data, error } = await query.returns<ActivityLogRecord[]>()
 
       if (error) {
         logger.error('Failed to fetch recent activities', error, {
@@ -234,7 +274,7 @@ export class ActivityLogger {
         return []
       }
 
-      return data || []
+      return data ?? []
 
     } catch (error) {
       logger.error('Error fetching activities', error as Error, {
@@ -245,7 +285,7 @@ export class ActivityLogger {
   }
 
   // Get user activity summary (simplified - no complex views)
-  async getUserActivitySummary(): Promise<any[]> {
+  async getUserActivitySummary(): Promise<ActivitySummaryRow[]> {
     try {
       const supabase = await createServiceClient()
       
@@ -264,7 +304,7 @@ export class ActivityLogger {
         return []
       }
 
-      return data || []
+      return data ?? []
 
     } catch (error) {
       logger.error('Error fetching user summary', error as Error, {
@@ -275,7 +315,7 @@ export class ActivityLogger {
   }
 
   // Get daily activity stats (simplified)
-  async getDailyActivityStats(days: number = 7): Promise<any[]> {
+  async getDailyActivityStats(days: number = 7): Promise<DailyActivityRow[]> {
     try {
       const supabase = await createServiceClient()
       
@@ -293,7 +333,7 @@ export class ActivityLogger {
         return []
       }
 
-      return data || []
+      return (data as DailyActivityRow[] | null) ?? []
 
     } catch (error) {
       logger.error('Error fetching daily stats', error as Error, {
@@ -331,7 +371,7 @@ export class ActivityLogger {
         }
       }
 
-      const activities = data || []
+      const activities: ActivityStatRow[] = data ?? []
       const uniqueUsers = new Set(activities.map(a => a.user_uuid)).size
       const uploads = activities.filter(a => a.action_type === 'upload').length
       const deletes = activities.filter(a => a.action_type === 'delete').length

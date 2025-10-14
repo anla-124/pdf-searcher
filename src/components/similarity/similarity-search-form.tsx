@@ -10,13 +10,14 @@ import { SearchableMultiSelect } from '@/components/ui/searchable-multi-select'
 import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { Search, Loader2, RotateCcw, X, Building, Users, Briefcase, Globe } from 'lucide-react'
-import { SimilarityResults } from './similarity-results'
+import { SimilarityResultsV2 } from './similarity-results-v2'
 import {
   LAW_FIRM_OPTIONS,
   FUND_MANAGER_OPTIONS,
   FUND_ADMIN_OPTIONS,
   JURISDICTION_OPTIONS,
 } from '@/lib/metadata-constants'
+import { clientLogger } from '@/lib/client-logger'
 
 interface SimilaritySearchFormProps {
   documentId: string
@@ -45,14 +46,16 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
     abortControllerRef.current = new AbortController()
     
     try {
-      const response = await fetch(`/api/documents/${documentId}/similar`, {
+      const response = await fetch(`/api/documents/${documentId}/similar-v2`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           filters,
-          topK,
+          stage0_topK: 600, // Stage 0: Wide centroid sweep for high recall
+          stage1_topK: 250, // Stage 1: Preserve broad candidate set for Stage 2
+          stage2_fallbackThreshold: 0.8,
         }),
         signal: abortControllerRef.current.signal,
       })
@@ -65,10 +68,10 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
       setResults(data.results)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.warn('Search cancelled by user')
+        clientLogger.warn('Search cancelled by user')
         setResults([])
       } else {
-        console.error('Similarity search error:', error)
+        clientLogger.error('Similarity search error', error)
         alert('Failed to search for similar documents. Please try again.')
       }
     } finally {
@@ -202,12 +205,12 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Law Firm
                 </Label>
                 <SearchableMultiSelect
-                  options={LAW_FIRM_OPTIONS as unknown as {value: string; label: string}[]}
-                  values={filters.law_firm || []}
+                  options={LAW_FIRM_OPTIONS}
+                  values={filters.law_firm ?? []}
                   onValuesChange={(values) =>
                     setFilters(prev => ({
                       ...prev,
-                      law_firm: values as any
+                      law_firm: values
                     }))
                   }
                   placeholder="Any law firm"
@@ -222,12 +225,12 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Fund Manager
                 </Label>
                 <SearchableMultiSelect
-                  options={FUND_MANAGER_OPTIONS as unknown as {value: string; label: string}[]}
-                  values={filters.fund_manager || []}
+                  options={FUND_MANAGER_OPTIONS}
+                  values={filters.fund_manager ?? []}
                   onValuesChange={(values) =>
                     setFilters(prev => ({
                       ...prev,
-                      fund_manager: values as any
+                      fund_manager: values
                     }))
                   }
                   placeholder="Any fund manager"
@@ -242,12 +245,12 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Fund Admin
                 </Label>
                 <SearchableMultiSelect
-                  options={FUND_ADMIN_OPTIONS as unknown as {value: string; label: string}[]}
-                  values={filters.fund_admin || []}
+                  options={FUND_ADMIN_OPTIONS}
+                  values={filters.fund_admin ?? []}
                   onValuesChange={(values) =>
                     setFilters(prev => ({
                       ...prev,
-                      fund_admin: values as any
+                      fund_admin: values
                     }))
                   }
                   placeholder="Any fund admin"
@@ -262,12 +265,12 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                   Jurisdiction
                 </Label>
                 <SearchableMultiSelect
-                  options={JURISDICTION_OPTIONS as unknown as {value: string; label: string}[]}
-                  values={filters.jurisdiction || []}
+                  options={JURISDICTION_OPTIONS}
+                  values={filters.jurisdiction ?? []}
                   onValuesChange={(values) =>
                     setFilters(prev => ({
                       ...prev,
-                      jurisdiction: values as any
+                      jurisdiction: values
                     }))
                   }
                   placeholder="Any jurisdiction"
@@ -356,8 +359,8 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
 
       {/* Results */}
       {hasSearched && (
-        <SimilarityResults 
-          results={results} 
+        <SimilarityResultsV2
+          results={results}
           sourceDocument={sourceDocument}
           isLoading={isSearching}
         />

@@ -11,7 +11,8 @@ export default defineConfig({
     
     // Integration test patterns
     include: [
-      'tests/integration/external-services.test.ts' // Only external-services tests with MSW mocks
+      'tests/integration/external-services.test.ts', // Only external-services tests with MSW mocks
+      'tests/integration/similarity-scenarios.test.ts' // 4 critical similarity search scenarios
       // 'tests/integration/unlimited-processing.test.ts' // Requires real Supabase - skip in CI
     ],
     exclude: [

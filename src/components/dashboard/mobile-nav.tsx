@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
+import { clientLogger } from '@/lib/client-logger'
 import { 
   Upload, 
   Search, 
@@ -43,7 +44,7 @@ export function MobileNav() {
       await supabase.auth.signOut()
       router.push('/login')
     } catch (error) {
-      console.error('Error logging out:', error)
+      clientLogger.error('Error logging out', error)
     } finally {
       setIsLoading(false)
     }

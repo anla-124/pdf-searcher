@@ -3,7 +3,8 @@ import { PDFDocument } from 'pdf-lib'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { generateEmbeddings } from '@/lib/embeddings-vertex'
-import { indexDocumentInPinecone } from '@/lib/pinecone'
+import { indexDocumentInPinecone, deleteDocumentFromPinecone } from '@/lib/pinecone'
+import { l2Normalize } from '@/lib/similarity/utils/vector-operations'
 import { detectOptimalProcessor, getProcessorId, getProcessorName } from '@/lib/document-ai-config'
 import { batchProcessor } from '@/lib/document-ai-batch'
 import { getGoogleClientOptions } from '@/lib/google-credentials'
@@ -11,12 +12,13 @@ import { SmartRetry, RetryConfigs, circuitBreakers } from '@/lib/retry-logic'
 import { logger, measurePerformance, withRequestContext } from '@/lib/logger'
 import { analyzeDocumentSize, estimateProcessingTime, requiresSpecialHandling, type DocumentSizeAnalysis } from '@/lib/document-size-strategies'
 import { DatabaseDocumentWithContent } from '@/types/external-apis'
+import { DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP } from '@/lib/constants/chunking'
 
 // Processing pipeline fingerprint - increment when major changes are made
-const PROCESSING_PIPELINE_VERSION = '2.1.0' // Updated for page numbering fix and similarity improvements
+const PROCESSING_PIPELINE_VERSION = '2.3.0' // Updated for refined chunking strategy and similarity improvements
 const PROCESSING_FEATURES = {
   pageNumbering: 'sequential-fallback', // Uses pageIndex+1 as fallback
-  chunkingStrategy: 'paged-chunks-v2',  // Page-aware chunking with overlap
+  chunkingStrategy: 'paged-chunks-v3',  // Page-aware chunking (smaller stride)
   embeddingRetry: 'unlimited-v1',       // Unlimited retry logic
   structuredLogging: 'winston-pino-v1'  // Structured logging system
 }
@@ -96,8 +98,156 @@ interface SaveProcessedDocumentResult {
   } | null
 }
 
+/**
+ * Check if document processing has been cancelled by user
+ */
+async function checkCancellation(documentId: string): Promise<boolean> {
+  const supabase = await createServiceClient()
+  try {
+    const { data, error } = await supabase
+      .from('documents')
+      .select('status')
+      .eq('id', documentId)
+      .single()
+
+    if (error || !data) {
+      return false // If we can't check, assume not cancelled
+    }
+
+    return data.status === 'cancelled'
+  } catch (error) {
+    logger.error('Error checking cancellation status', error as Error, { documentId })
+    return false
+  } finally {
+    releaseServiceClient(supabase)
+  }
+}
+
+/**
+ * Clean up all partial data for a cancelled document
+ * Removes data from: Supabase (embeddings, content, fields, status), Pinecone, Storage
+ */
+export async function cleanupCancelledDocument(documentId: string): Promise<void> {
+  logger.info('Starting cleanup of cancelled document', { documentId, component: 'document-processing' })
+
+  const supabase = await createServiceClient()
+
+  try {
+    // 1. Get document info (file path, user_id) before deletion
+    const { data: document } = await supabase
+      .from('documents')
+      .select('file_path, user_id, filename')
+      .eq('id', documentId)
+      .single()
+
+    if (!document) {
+      logger.warn('Document not found for cleanup', { documentId })
+      return
+    }
+
+    // 2. Delete all embeddings from Supabase
+    const { error: embeddingsError } = await supabase
+      .from('document_embeddings')
+      .delete()
+      .eq('document_id', documentId)
+
+    if (embeddingsError) {
+      logger.error('Failed to delete embeddings during cleanup', embeddingsError, { documentId })
+    } else {
+      logger.info('Deleted embeddings from Supabase', { documentId })
+    }
+
+    // 3. Delete vectors from Pinecone
+    try {
+      await deleteDocumentFromPinecone(documentId)
+      logger.info('Deleted vectors from Pinecone', { documentId })
+    } catch (pineconeError) {
+      logger.error('Failed to delete Pinecone vectors during cleanup', pineconeError as Error, { documentId })
+      // Continue cleanup even if Pinecone fails
+    }
+
+    // 4. Delete document content
+    const { error: contentError } = await supabase
+      .from('document_content')
+      .delete()
+      .eq('document_id', documentId)
+
+    if (contentError) {
+      logger.error('Failed to delete content during cleanup', contentError, { documentId })
+    }
+
+    // 5. Delete extracted fields
+    const { error: fieldsError } = await supabase
+      .from('extracted_fields')
+      .delete()
+      .eq('document_id', documentId)
+
+    if (fieldsError) {
+      logger.error('Failed to delete extracted fields during cleanup', fieldsError, { documentId })
+    }
+
+    // 6. Delete processing status records
+    const { error: statusError } = await supabase
+      .from('processing_status')
+      .delete()
+      .eq('document_id', documentId)
+
+    if (statusError) {
+      logger.error('Failed to delete processing status during cleanup', statusError, { documentId })
+    }
+
+    // 7. Delete from storage
+    if (document.file_path) {
+      const { error: storageError } = await supabase.storage
+        .from('documents')
+        .remove([document.file_path])
+
+      if (storageError) {
+        logger.error('Failed to delete file from storage during cleanup', storageError, {
+          documentId,
+          filePath: document.file_path
+        })
+      } else {
+        logger.info('Deleted file from storage', { documentId, filePath: document.file_path })
+      }
+    }
+
+    // 8. Delete the document record itself (CASCADE will handle remaining references)
+    const { error: docError } = await supabase
+      .from('documents')
+      .delete()
+      .eq('id', documentId)
+
+    if (docError) {
+      logger.error('Failed to delete document record during cleanup', docError, { documentId })
+      throw docError
+    }
+
+    logger.info('Successfully cleaned up cancelled document', {
+      documentId,
+      filename: document.filename
+    })
+
+  } catch (error) {
+    logger.error('Failed to cleanup cancelled document', error as Error, { documentId })
+    throw error
+  } finally {
+    releaseServiceClient(supabase)
+  }
+}
+
+/**
+ * Exception thrown when processing is cancelled
+ */
+class ProcessingCancelledException extends Error {
+  constructor(documentId: string) {
+    super(`Processing cancelled for document ${documentId}`)
+    this.name = 'ProcessingCancelledException'
+  }
+}
+
 export async function processDocument(documentId: string): Promise<ProcessDocumentResult> {
-  return withRequestContext({ 
+  return withRequestContext({
     correlationId: `doc_${documentId}`
   }, async () => {
     return measurePerformance('processDocument', 'document-processing', async () => {
@@ -107,8 +257,14 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
       })
 
       const supabase = await createServiceClient()
-      
+
       try {
+        // CHECKPOINT 1: Check cancellation before starting
+        if (await checkCancellation(documentId)) {
+          logger.info('Document cancelled before processing started', { documentId })
+          throw new ProcessingCancelledException(documentId)
+        }
+
         // Update processing status
         await updateProcessingStatus(documentId, 'processing', 10, 'Starting document processing...')
         logger.logDocumentProcessing('status-update', documentId, 'progress', { progress: 10 })
@@ -135,12 +291,19 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
               `)
               .eq('id', documentId)
               .single();
-        
+
             const document: DatabaseDocumentWithContent | null = data;
             const fetchError: any = error;
+
         if (fetchError || !document) {
           logger.error('Document not found in database', fetchError || new Error('Document not found'), { documentId })
           throw new Error('Document not found')
+        }
+
+        // Check if document was cancelled
+        if (document.status === 'cancelled') {
+          logger.info('Document was cancelled before processing', { documentId })
+          throw new ProcessingCancelledException(documentId)
         }
 
         // Flatten extracted_text from document_content
@@ -208,6 +371,12 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
         const arrayBuffer = await fileData.arrayBuffer()
         const base64Content = Buffer.from(arrayBuffer).toString('base64')
         logger.debug('Document converted to base64', { documentId, base64Length: base64Content.length })
+
+        // CHECKPOINT 2: Check cancellation before Document AI processing
+        if (await checkCancellation(documentId)) {
+          logger.info('Document cancelled before Document AI processing', { documentId })
+          throw new ProcessingCancelledException(documentId)
+        }
 
         // Update processing status
         await updateProcessingStatus(documentId, 'processing', 40, 'Processing with Document AI...')
@@ -298,6 +467,12 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
                 client
               )
 
+              // CHECKPOINT: Check cancellation before chunked embedding generation
+              if (await checkCancellation(documentId)) {
+                logger.info('Document cancelled before chunked embedding generation', { documentId })
+                throw new ProcessingCancelledException(documentId)
+              }
+
               await updateProcessingStatus(documentId, 'processing', 60, 'Extracting structured data from chunks...')
               await updateProcessingStatus(documentId, 'processing', 80, 'Generating embeddings from chunks...')
               logger.logDocumentProcessing('embedding-generation', documentId, 'started', { progress: 80 })
@@ -358,6 +533,11 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
 
               return { switchedToBatch: false, metrics }
             } catch (chunkError) {
+              // Re-throw cancellation exceptions - don't try batch processing for cancelled documents
+              if (chunkError instanceof ProcessingCancelledException) {
+                throw chunkError
+              }
+
               logger.error('Chunked processing fallback failed', chunkError as Error, { documentId })
               try {
                 await processBatchDocument(documentId)
@@ -394,6 +574,12 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           throw new Error('No document returned from Document AI')
         }
 
+        // CHECKPOINT 2B: Check cancellation after Document AI completes
+        if (await checkCancellation(documentId)) {
+          logger.info('Document cancelled after Document AI completed', { documentId })
+          throw new ProcessingCancelledException(documentId)
+        }
+
         // Update processing status
         await updateProcessingStatus(documentId, 'processing', 60, 'Extracting structured data...')
         logger.logDocumentProcessing('data-extraction', documentId, 'started', { progress: 60 })
@@ -406,6 +592,12 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           pageCount: processedData.pageCount,
           fieldsCount: processedData.structuredData.fields?.length || 0
         })
+
+        // CHECKPOINT 3: Check cancellation before embedding generation
+        if (await checkCancellation(documentId)) {
+          logger.info('Document cancelled before embedding generation', { documentId })
+          throw new ProcessingCancelledException(documentId)
+        }
 
         await updateProcessingStatus(documentId, 'processing', 80, 'Generating embeddings...')
         logger.logDocumentProcessing('embedding-generation', documentId, 'started', { progress: 80 })
@@ -461,12 +653,27 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
         return { switchedToBatch: false, metrics } // Successful sync processing
 
       } catch (error) {
-        logger.error('Document processing failed', error as Error, { 
+        // Handle cancellation specially - clean up all partial data
+        if (error instanceof ProcessingCancelledException) {
+          logger.info('Processing cancelled, cleaning up partial data', { documentId })
+
+          try {
+            await cleanupCancelledDocument(documentId)
+            logger.info('Cleanup completed for cancelled document', { documentId })
+          } catch (cleanupError) {
+            logger.error('Failed to cleanup cancelled document', cleanupError as Error, { documentId })
+          }
+
+          // Don't re-throw - cancellation is not an error
+          return { switchedToBatch: false }
+        }
+
+        logger.error('Document processing failed', error as Error, {
           documentId,
           component: 'document-processing',
           operation: 'processDocument'
         })
-        
+
         // Update document and processing status with error
         await supabase
           .from('documents')
@@ -477,17 +684,17 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           .eq('id', documentId)
 
         await updateProcessingStatus(
-          documentId, 
-          'error', 
-          0, 
+          documentId,
+          'error',
+          0,
           'Processing failed',
           error instanceof Error ? error.message : 'Unknown error'
         )
-        
-        logger.logDocumentProcessing('processing', documentId, 'failed', { 
-          error: error instanceof Error ? error.message : 'Unknown error' 
+
+        logger.logDocumentProcessing('processing', documentId, 'failed', {
+          error: error instanceof Error ? error.message : 'Unknown error'
         })
-        
+
         // Re-throw the error so job processor can handle it
         throw error
       } finally {
@@ -724,14 +931,21 @@ async function processChunkWithRetry(documentId: string, pagedChunk: PagedChunk,
         const supabase = await createServiceClient()
 
         try {
-          const { error } = await supabase.from('document_embeddings').insert({
-            document_id: documentId,
-            vector_id: vectorId,
-            embedding,
-            chunk_text: pagedChunk.text,
-            chunk_index: pagedChunk.chunkIndex,
-            page_number: pagedChunk.pageNumber,
-          })
+          const { error } = await supabase
+            .from('document_embeddings')
+            .upsert(
+              {
+                document_id: documentId,
+                vector_id: vectorId,
+                embedding,
+                chunk_text: pagedChunk.text,
+                chunk_index: pagedChunk.chunkIndex,
+                page_number: pagedChunk.pageNumber,
+              },
+              {
+                onConflict: 'document_id,chunk_index'
+              }
+            )
           
           logger.debug('Stored embedding in database', { 
             chunkIndex: pagedChunk.chunkIndex, 
@@ -958,6 +1172,13 @@ async function saveProcessedDocumentData(
 
   if (contentError) {
     logger.error('Failed to store extracted text in document_content', contentError, { documentId })
+
+    // Foreign key constraint violation means document was deleted (cancelled)
+    if (contentError.message?.includes('foreign key constraint') || (contentError as any).code === '23503') {
+      logger.info('Document was deleted during processing (foreign key violation)', { documentId })
+      throw new ProcessingCancelledException(documentId)
+    }
+
     throw new Error('Failed to store extracted text in document_content')
   }
 
@@ -1125,8 +1346,8 @@ export async function generateAndIndexEmbeddings(documentId: string, text: strin
 
     const businessMetadata = docRecord?.metadata || {}
 
-    // Split text into chunks for embedding
-    const chunks = splitTextIntoChunks(text, 1000) // 1000 character chunks with overlap
+    // Split text into chunks for embedding using current defaults
+    const chunks = splitTextIntoChunks(text, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP)
     
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]
@@ -1253,7 +1474,11 @@ function buildProcessedDocumentData(document: DocumentAIDocument, pageOffset: nu
 }
 
 // Split text into chunks while preserving page information
-function splitTextIntoPagedChunks(pagesText: { text: string; pageNumber: number }[], chunkSize: number, overlap: number = 200): PagedChunk[] {
+function splitTextIntoPagedChunks(
+  pagesText: { text: string; pageNumber: number }[],
+  chunkSize: number,
+  overlap: number = DEFAULT_CHUNK_OVERLAP
+): PagedChunk[] {
   const pagedChunks: PagedChunk[] = []
   let globalChunkIndex = 0
   
@@ -1322,6 +1547,11 @@ async function generateEmbeddingsWithUnlimitedRetries(
       }
 
     } catch (error) {
+      // Re-throw cancellation exceptions immediately - don't retry
+      if (error instanceof ProcessingCancelledException) {
+        throw error
+      }
+
       attempt += 1
       logger.warn('Embedding attempt failed', { attempt, documentId, error: (error as Error)?.message, component: 'document-processing' })
 
@@ -1387,6 +1617,216 @@ async function generateEmbeddingsWithUnlimitedRetries(
   }
 }
 
+/**
+ * Compute centroid embedding and effective chunk count for similarity search
+ * CRITICAL: This enables production-ready 3-stage similarity search
+ */
+export async function computeAndStoreCentroid(
+  documentId: string,
+  totalChunks: number
+): Promise<void> {
+  const supabase = await createServiceClient()
+
+  try {
+    logger.info('Computing centroid and effective chunk count', {
+      documentId,
+      totalChunks,
+      component: 'document-processing'
+    })
+
+    // 1. Fetch all embeddings for this document
+    // IMPORTANT: Add explicit limit to avoid Supabase default row limits
+    const { data: allEmbeddings, error: fetchError } = await supabase
+      .from('document_embeddings')
+      .select('chunk_index, embedding, chunk_text')
+      .eq('document_id', documentId)
+      .order('chunk_index', { ascending: true })
+      .limit(100000) // Support very large documents
+
+    if (fetchError || !allEmbeddings || allEmbeddings.length === 0) {
+      logger.error('No embeddings found for centroid computation - THIS IS A BUG!', undefined, {
+        documentId,
+        totalChunksExpected: totalChunks,
+        fetchError: fetchError?.message,
+        embeddingsReturned: allEmbeddings?.length || 0,
+        component: 'document-processing'
+      })
+      return
+    }
+
+    // CRITICAL: Deduplicate by chunk_index (some documents may have duplicates)
+    const seen = new Set<number>()
+    const embeddings = allEmbeddings.filter(e => {
+      if (seen.has(e.chunk_index)) {
+        return false
+      }
+      seen.add(e.chunk_index)
+      return true
+    })
+
+    logger.info('Successfully fetched embeddings for centroid computation', {
+      documentId,
+      totalRows: allEmbeddings.length,
+      uniqueChunks: embeddings.length,
+      expectedChunks: totalChunks,
+      duplicatesRemoved: allEmbeddings.length - embeddings.length,
+      component: 'document-processing'
+    })
+
+    // 2. Compute centroid (mean of all embeddings)
+    // CRITICAL: Parse embeddings if they're stored as strings in Supabase
+    const embeddingVectors = embeddings.map(e => {
+      let embedding = e.embedding
+
+      // If embedding is a string, parse it
+      if (typeof embedding === 'string') {
+        try {
+          embedding = JSON.parse(embedding)
+        } catch (parseError) {
+          logger.error('Failed to parse embedding JSON', parseError as Error, {
+            documentId,
+            component: 'document-processing'
+          })
+          return null
+        }
+      }
+
+      return embedding as number[]
+    }).filter(e => e !== null) as number[][]
+
+    // Validate embeddings before processing
+    if (embeddingVectors.length === 0 || !embeddingVectors[0] || !Array.isArray(embeddingVectors[0])) {
+      logger.error('Invalid embedding format detected after parsing', undefined, {
+        documentId,
+        embeddingType: typeof embeddingVectors[0],
+        parsedCount: embeddingVectors.length,
+        originalCount: embeddings.length,
+        component: 'document-processing'
+      })
+      return
+    }
+
+    logger.info('Successfully parsed embeddings', {
+      documentId,
+      parsedCount: embeddingVectors.length,
+      originalCount: embeddings.length,
+      component: 'document-processing'
+    })
+
+    const dimensions = embeddingVectors[0].length
+
+    // Validate all embeddings have consistent dimensions and valid values
+    for (let idx = 0; idx < embeddingVectors.length; idx++) {
+      const embedding = embeddingVectors[idx]
+
+      if (!embedding || !Array.isArray(embedding)) {
+        logger.error('Embedding is not an array', undefined, {
+          documentId,
+          embeddingIndex: idx,
+          embeddingType: typeof embedding,
+          component: 'document-processing'
+        })
+        return
+      }
+
+      if (embedding.length !== dimensions) {
+        logger.error('Inconsistent embedding dimensions', undefined, {
+          documentId,
+          embeddingIndex: idx,
+          expectedDimensions: dimensions,
+          actualDimensions: embedding.length,
+          component: 'document-processing'
+        })
+        return
+      }
+
+      // Check for null/undefined values in embedding
+      for (let i = 0; i < embedding.length; i++) {
+        if (embedding[i] === null || embedding[i] === undefined || !Number.isFinite(embedding[i])) {
+          logger.error('Invalid value in embedding vector', undefined, {
+            documentId,
+            embeddingIndex: idx,
+            dimension: i,
+            value: embedding[i],
+            component: 'document-processing'
+          })
+          return
+        }
+      }
+    }
+
+    const centroid = new Array(dimensions).fill(0)
+    for (const embedding of embeddingVectors) {
+      for (let i = 0; i < dimensions; i++) {
+        centroid[i]! += embedding[i]! / embeddingVectors.length
+      }
+    }
+
+    // 3. Normalize the centroid (CRITICAL: pre-normalize for fast cosine similarity)
+    const normalizedCentroid = l2Normalize(centroid)
+
+    // Validate normalized centroid before storing
+    for (let i = 0; i < normalizedCentroid.length; i++) {
+      if (normalizedCentroid[i] === null || normalizedCentroid[i] === undefined || !Number.isFinite(normalizedCentroid[i])) {
+        logger.error('Invalid value in normalized centroid', undefined, {
+          documentId,
+          dimension: i,
+          value: normalizedCentroid[i],
+          centroidValue: centroid[i],
+          component: 'document-processing'
+        })
+        return
+      }
+    }
+
+    // 4. Compute effective chunk count
+    // CRITICAL: Use ACTUAL chunk count from database, not theoretical calculation
+    // This represents what's actually indexed and searchable
+    const actualChunkCount = embeddingVectors.length
+
+    logger.info('Centroid computed successfully', {
+      documentId,
+      actualChunkCount,
+      component: 'document-processing'
+    })
+
+    // 5. Update documents table with centroid and effective_chunk_count
+    // IMPORTANT: effective_chunk_count should equal actual chunks indexed
+    const { error: updateError } = await supabase
+      .from('documents')
+      .update({
+        centroid_embedding: normalizedCentroid,
+        effective_chunk_count: actualChunkCount,  // Use actual count, not theoretical
+        embedding_model: 'text-embedding-004'
+      })
+      .eq('id', documentId)
+
+    if (updateError) {
+      logger.error('Failed to store centroid in documents table', updateError, {
+        documentId,
+        component: 'document-processing'
+      })
+      // Don't throw - centroid is optional, document processing should complete
+      return
+    }
+
+    logger.info('Centroid and effective chunk count stored successfully', {
+      documentId,
+      effectiveChunkCount: actualChunkCount,
+      component: 'document-processing'
+    })
+
+  } catch (error) {
+    logger.error('Failed to compute centroid', error as Error, {
+      documentId,
+      component: 'document-processing'
+    })
+    // Don't throw - centroid is optional, document processing should complete
+  } finally {
+    releaseServiceClient(supabase)
+  }
+}
+
 async function generateEmbeddingsFromPages(
   documentId: string,
   pagesText: { text: string; pageNumber: number }[],
@@ -1394,13 +1834,38 @@ async function generateEmbeddingsFromPages(
   filename: string,
   sizeAnalysis?: DocumentSizeAnalysis
 ): Promise<{ chunkCount: number }> {
-  const pagedChunks = splitTextIntoPagedChunks(pagesText, 1000)
+  const pagedChunks = splitTextIntoPagedChunks(pagesText, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP)
 
   logger.info('Starting chunk processing for document', {
     documentId,
     totalChunks: pagedChunks.length,
     component: 'document-processing'
   })
+
+  // CRITICAL: Clean up any existing chunks before reprocessing
+  // This prevents duplicates if document is reprocessed
+  const supabase = await createServiceClient()
+  try {
+    const { error: deleteError } = await supabase
+      .from('document_embeddings')
+      .delete()
+      .eq('document_id', documentId)
+
+    if (deleteError) {
+      logger.warn('Failed to clean up existing chunks (continuing anyway)', {
+        documentId,
+        error: deleteError.message,
+        component: 'document-processing'
+      })
+    } else {
+      logger.info('Cleaned up existing chunks before reprocessing', {
+        documentId,
+        component: 'document-processing'
+      })
+    }
+  } finally {
+    releaseServiceClient(supabase)
+  }
 
   const maxConcurrentChunks = parseInt(process.env['MAX_CONCURRENT_CHUNKS_PER_DOC'] || '50')
   const processingConfig = sizeAnalysis?.processingConfig || {
@@ -1415,6 +1880,12 @@ async function generateEmbeddingsFromPages(
   const batchSize = Math.min(maxConcurrentChunks, processingConfig.batchSize)
 
   for (let i = 0; i < pagedChunks.length; i += batchSize) {
+    // CHECKPOINT: Check cancellation between batches
+    if (await checkCancellation(documentId)) {
+      logger.info('Document cancelled during embedding generation', { documentId, processedChunks: i })
+      throw new ProcessingCancelledException(documentId)
+    }
+
     const batch = pagedChunks.slice(i, i + batchSize);
     logger.debug('Processing chunk batch', {
       batchNumber: Math.floor(i / batchSize) + 1,
@@ -1484,10 +1955,36 @@ async function generateEmbeddingsFromPages(
     component: 'document-processing'
   })
 
+  // Small delay to ensure all database writes are visible (eventual consistency)
+  await new Promise(resolve => setTimeout(resolve, 500))
+
+  // Compute and store centroid and effective chunk count for similarity search
+  logger.info('About to compute centroid', {
+    documentId,
+    totalChunks: pagedChunks.length,
+    component: 'document-processing'
+  })
+  await computeAndStoreCentroid(documentId, pagedChunks.length)
+  logger.info('Finished computing centroid', {
+    documentId,
+    component: 'document-processing'
+  })
+
+  // Verify Pinecone indexing consistency
+  logger.info('Verifying Pinecone indexing consistency', {
+    documentId,
+    expectedChunks: pagedChunks.length,
+    component: 'document-processing'
+  })
+
   return { chunkCount: pagedChunks.length }
 }
 
-export function splitTextIntoChunks(text: string, chunkSize: number, overlap: number = 200): string[] {
+export function splitTextIntoChunks(
+  text: string,
+  chunkSize: number,
+  overlap: number = DEFAULT_CHUNK_OVERLAP
+): string[] {
   const chunks: string[] = []
   let start = 0
   

@@ -18,6 +18,15 @@ interface PageProps {
   params: Promise<{ id: string }>
 }
 
+type MetadataOption = { value: string; label: string }
+
+const resolveOptionLabel = (value: unknown, options: MetadataOption[]): string => {
+  if (typeof value !== 'string' || value.length === 0) {
+    return value ? String(value) : ''
+  }
+  return options.find(opt => opt.value === value)?.label ?? value
+}
+
 export default async function SimilarDocumentsPage({ params }: PageProps) {
   const { id } = await params
   const supabase = await createClient()
@@ -114,25 +123,25 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
                     {document.metadata?.law_firm && (
                       <div className="flex items-center gap-1">
                         <Building className="h-3 w-3" />
-                        {LAW_FIRM_OPTIONS.find(opt => opt.value === document.metadata?.law_firm as any)?.label || String(document.metadata?.law_firm)}
+                        {resolveOptionLabel(document.metadata?.law_firm, LAW_FIRM_OPTIONS)}
                       </div>
                     )}
                     {document.metadata?.fund_manager && (
                       <div className="flex items-center gap-1">
                         <Users className="h-3 w-3" />
-                        {FUND_MANAGER_OPTIONS.find(opt => opt.value === document.metadata?.fund_manager as any)?.label || String(document.metadata?.fund_manager)}
+                        {resolveOptionLabel(document.metadata?.fund_manager, FUND_MANAGER_OPTIONS)}
                       </div>
                     )}
                     {document.metadata?.fund_admin && (
                       <div className="flex items-center gap-1">
                         <Briefcase className="h-3 w-3" />
-                        {FUND_ADMIN_OPTIONS.find(opt => opt.value === document.metadata?.fund_admin as any)?.label || String(document.metadata?.fund_admin)}
+                        {resolveOptionLabel(document.metadata?.fund_admin, FUND_ADMIN_OPTIONS)}
                       </div>
                     )}
                     {document.metadata?.jurisdiction && (
                       <div className="flex items-center gap-1">
                         <Globe className="h-3 w-3" />
-                        {JURISDICTION_OPTIONS.find(opt => opt.value === document.metadata?.jurisdiction as any)?.label || String(document.metadata?.jurisdiction)}
+                        {resolveOptionLabel(document.metadata?.jurisdiction, JURISDICTION_OPTIONS)}
                       </div>
                     )}
                   </div>

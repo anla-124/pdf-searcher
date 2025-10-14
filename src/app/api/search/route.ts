@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { HybridSearchEngine } from '@/lib/hybrid-search'
 import { SearchFilters } from '@/types'
+import { logger } from '@/lib/logger'
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,10 +39,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 })
     }
 
-    console.warn(`🔍 Hybrid search request: "${query}"`)
+    logger.info('Hybrid search request received', {
+      query,
+      userId: user.id,
+      topK,
+      enableSemanticSearch,
+      enableKeywordSearch,
+      enableHybridRanking
+    })
 
     // Convert filters to Pinecone format
-    const pineconeFilters: Record<string, any> = {}
+    const pineconeFilters: Record<string, unknown> = {}
 
     // Business metadata filters
     if (filters.law_firm && filters.law_firm.length > 0) {
@@ -70,7 +78,11 @@ export async function POST(request: NextRequest) {
       keywordWeight
     })
 
-    console.warn(`✅ Hybrid search completed: ${searchResults.results.length} results`)
+    logger.info('Hybrid search completed', {
+      query,
+      userId: user.id,
+      resultCount: searchResults.results.length
+    })
 
     return NextResponse.json({
       ...searchResults,
@@ -80,7 +92,7 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Search error:', error)
+    logger.error('Hybrid search error', error instanceof Error ? error : new Error(String(error)))
     return NextResponse.json(
       { error: 'Search failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }

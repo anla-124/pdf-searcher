@@ -4,11 +4,11 @@
 -- 🚀 CONSOLIDATED PRODUCTION-READY SETUP SCRIPT
 -- 
 -- This single script sets up the complete PDF AI Assistant database with:
--- ✅ Core database schema (tables, policies, triggers)  
+-- ✅ Core database schema (tables, policies, triggers)
 -- ✅ Enterprise-scale performance optimizations (70-90% faster queries)
 -- ✅ Advanced indexing strategies for 100+ concurrent users
 -- ✅ Activity logging system for user tracking
--- ✅ Page tracking functionality for similarity search
+-- ✅ 3-stage similarity search with centroid-based filtering
 -- ✅ Batch processing support for large documents
 -- ✅ Pre-aggregated views for admin dashboards
 -- ✅ Security policies and threat protection
@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS public.documents (
   extracted_fields JSONB,
   metadata JSONB,
   page_count INTEGER,
+  -- Similarity search columns for 3-stage pipeline
+  centroid_embedding vector(768),  -- Pre-computed document-level centroid for Stage 0 filtering
+  effective_chunk_count INTEGER,   -- De-overlapped chunk count for accurate size ratio calculation
+  embedding_model TEXT DEFAULT 'text-embedding-004',  -- Track which embedding model was used
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -96,6 +100,10 @@ CREATE TABLE IF NOT EXISTS public.document_embeddings (
   page_number INTEGER,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Ensure chunk_index remains unique per document (prevent duplicate embeddings)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_embeddings_unique
+  ON public.document_embeddings (document_id, chunk_index);
 
 -- Store extracted text separately to keep documents table lightweight
 CREATE TABLE IF NOT EXISTS public.document_content (
@@ -256,6 +264,12 @@ WHERE metadata->>'fund_admin' IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_documents_metadata_jurisdiction
 ON documents USING GIN ((metadata->>'jurisdiction'))
 WHERE metadata->>'jurisdiction' IS NOT NULL;
+
+-- Centroid embedding index for fast Stage 0 similarity search filtering (IVFFlat)
+CREATE INDEX IF NOT EXISTS idx_documents_centroid_embedding
+ON documents USING ivfflat (centroid_embedding vector_cosine_ops)
+WITH (lists = 100)
+WHERE centroid_embedding IS NOT NULL;
 
 -- Enhanced full-text search on title and filename combined
 CREATE INDEX IF NOT EXISTS idx_documents_title_search

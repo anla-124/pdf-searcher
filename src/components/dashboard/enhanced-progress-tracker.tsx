@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import type { ComponentType, SVGProps } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
+import { clientLogger } from '@/lib/client-logger'
 import { 
   Upload, 
   FileText, 
@@ -19,7 +21,7 @@ interface ProcessingPhase {
   id: string
   name: string
   description: string
-  icon: React.ComponentType<any>
+  icon: ComponentType<SVGProps<SVGSVGElement>>
   status: 'pending' | 'active' | 'completed' | 'error'
   progress: number
   duration?: number
@@ -135,7 +137,7 @@ export function EnhancedProgressTracker({ documentId, onComplete }: EnhancedProg
           updateProgressFromStatus(data)
         }
       } catch (error) {
-        console.error('Failed to fetch processing status:', error)
+        clientLogger.error('Failed to fetch processing status', error)
       }
     }
 

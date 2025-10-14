@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Building, Users, Briefcase, Globe, Loader2 } from 'lucide-react'
+import { clientLogger } from '@/lib/client-logger'
 import { 
   LAW_FIRM_OPTIONS, 
   FUND_MANAGER_OPTIONS, 
@@ -32,6 +33,10 @@ interface EditableMetadata {
   jurisdiction: JurisdictionOption | ''
 }
 
+const coerceMetadataValue = <T extends string>(value: unknown): T | '' => {
+  return typeof value === 'string' && value.length > 0 ? (value as T) : ''
+}
+
 export function EditDocumentMetadataModal({ 
   document: currentDocument, 
   isOpen, 
@@ -51,10 +56,10 @@ export function EditDocumentMetadataModal({
   useEffect(() => {
     if (currentDocument && isOpen) {
       setMetadata({
-        law_firm: (currentDocument.metadata?.law_firm as any) || '',
-        fund_manager: (currentDocument.metadata?.fund_manager as any) || '',
-        fund_admin: (currentDocument.metadata?.fund_admin as any) || '',
-        jurisdiction: (currentDocument.metadata?.jurisdiction as any) || ''
+        law_firm: coerceMetadataValue<LawFirmOption>(currentDocument.metadata?.law_firm),
+        fund_manager: coerceMetadataValue<FundManagerOption>(currentDocument.metadata?.fund_manager),
+        fund_admin: coerceMetadataValue<FundAdminOption>(currentDocument.metadata?.fund_admin),
+        jurisdiction: coerceMetadataValue<JurisdictionOption>(currentDocument.metadata?.jurisdiction)
       })
       setError('')
     }
@@ -64,10 +69,10 @@ export function EditDocumentMetadataModal({
   const handleOpenChange = (open: boolean) => {
     if (open && currentDocument) {
       setMetadata({
-        law_firm: (currentDocument.metadata?.law_firm as any) || '',
-        fund_manager: (currentDocument.metadata?.fund_manager as any) || '',
-        fund_admin: (currentDocument.metadata?.fund_admin as any) || '',
-        jurisdiction: (currentDocument.metadata?.jurisdiction as any) || ''
+        law_firm: coerceMetadataValue<LawFirmOption>(currentDocument.metadata?.law_firm),
+        fund_manager: coerceMetadataValue<FundManagerOption>(currentDocument.metadata?.fund_manager),
+        fund_admin: coerceMetadataValue<FundAdminOption>(currentDocument.metadata?.fund_admin),
+        jurisdiction: coerceMetadataValue<JurisdictionOption>(currentDocument.metadata?.jurisdiction)
       })
       setError('')
     } else if (!open) {
@@ -116,7 +121,10 @@ export function EditDocumentMetadataModal({
       onSuccess(updatedDocument)
       onClose()
     } catch (error) {
-      console.error('Error updating document metadata:', error)
+      clientLogger.error(
+        'Error updating document metadata',
+        error instanceof Error ? error : new Error(String(error))
+      )
       setError(error instanceof Error ? error.message : 'Failed to update document metadata')
     } finally {
       setIsLoading(false)

@@ -22,7 +22,8 @@
     "test:ci": "vitest run --reporter=verbose --coverage",
     "test:performance": "node scripts/test-performance-improvements.js",
     "db:optimize": "node scripts/apply-database-optimizations.js",
-    "test:documents": "node scripts/test-document-processing.js all"
+    "test:documents": "node scripts/test-document-processing.js all",
+    "backfill:centroids": "node scripts/backfill-centroids.js"
   },
   "keywords": [],
   "author": "",

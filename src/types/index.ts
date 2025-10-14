@@ -42,10 +42,10 @@ export interface DocumentMetadata {
   }
   tags?: string[]
   // Business metadata fields
-  law_firm?: 'STB' | 'Proskauer' | 'N/A' | ''
-  fund_manager?: 'Blackstone' | 'KKR' | 'N/A' | ''
-  fund_admin?: 'Standish' | 'CITCO' | 'N/A' | ''
-  jurisdiction?: 'Delaware' | 'Cayman Islands' | 'N/A' | ''
+  law_firm?: string
+  fund_manager?: string
+  fund_admin?: string
+  jurisdiction?: string
   custom_fields?: Record<string, unknown> // FIXED: Replaced 'any' with 'unknown'
   embeddings_skipped?: boolean
   embeddings_error?: string
@@ -97,10 +97,10 @@ export interface SearchFilters {
   }
   tags?: string[]
   // Business metadata filters
-  law_firm?: ('STB' | 'Proskauer' | 'N/A')[]
-  fund_manager?: ('Blackstone' | 'KKR' | 'N/A')[]
-  fund_admin?: ('Standish' | 'CITCO' | 'N/A')[]
-  jurisdiction?: ('Delaware' | 'Cayman Islands' | 'N/A')[]
+  law_firm?: string[]
+  fund_manager?: string[]
+  fund_admin?: string[]
+  jurisdiction?: string[]
   min_score?: number
   page_range?: {
     start_page?: number

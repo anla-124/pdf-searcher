@@ -62,16 +62,13 @@ export class FileValidator {
       if (isPasswordProtected) {
         issues.push('Password-protected PDFs are not currently supported')
       }
-    } catch (error) {
-      console.warn('Could not check PDF encryption:', error)
+    } catch {
       warnings.push('Could not analyze file - proceeding with upload')
     }
     
     // Add size-based warnings without detailed analysis
     if (file.size > 10 * 1024 * 1024) { // > 10MB
       warnings.push('Large file - processing may take several minutes')
-    } else if (file.size > 5 * 1024 * 1024) { // > 5MB
-      warnings.push('Medium-sized file - processing may take 1-2 minutes')
     }
     
     const fileInfo = {

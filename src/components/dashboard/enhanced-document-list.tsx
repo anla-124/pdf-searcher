@@ -48,13 +48,15 @@ import {
   Loader2,
   RotateCcw
 } from 'lucide-react'
-import { 
+import {
   LAW_FIRM_OPTIONS, 
   FUND_MANAGER_OPTIONS, 
   FUND_ADMIN_OPTIONS, 
   JURISDICTION_OPTIONS 
 } from '@/lib/metadata-constants'
 import { format } from 'date-fns'
+import { createClient as createSupabaseClient } from '@/lib/supabase/client'
+import { clientLogger } from '@/lib/client-logger'
 
 interface DocumentListProps {
   refreshTrigger?: number
@@ -84,6 +86,7 @@ interface SearchModeState {
 }
 
 export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) {
+  const supabase = useMemo(() => createSupabaseClient(), [])
   const [documents, setDocuments] = useState<Document[]>([])
   const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -124,6 +127,8 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
     processed: 0,
     isDeleting: false,
   })
+
+  const [realtimeUserId, setRealtimeUserId] = useState<string | null>(null)
   
   const [sourceForSelectionId, setSourceForSelectionId] = useState<string | null>(null)
   const [retryingDocuments, setRetryingDocuments] = useState<Set<string>>(new Set())
@@ -166,7 +171,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load documents'
       setError(errorMessage)
-      console.error('Document fetch error:', err)
+      clientLogger.error('Document fetch error:', err)
     } finally {
       if (showLoading) setIsLoading(false)
     }
@@ -178,6 +183,113 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
     ))
     setEditingDocument(null)
   }
+
+  // Resolve user ID for realtime subscriptions
+  useEffect(() => {
+    let isMounted = true
+    supabase.auth.getUser()
+      .then(({ data, error }) => {
+        if (!isMounted) return
+        if (error) {
+          clientLogger.error('Failed to fetch Supabase user for realtime subscription:', error)
+          return
+        }
+        if (data?.user?.id) {
+          setRealtimeUserId(data.user.id)
+        }
+      })
+      .catch((err) => {
+        clientLogger.error('Unexpected Supabase auth error:', err)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [supabase])
+
+  // Fallback: infer user ID from documents if not already set
+  useEffect(() => {
+    if (!realtimeUserId && documents.length > 0) {
+      setRealtimeUserId(documents[0].user_id)
+    }
+  }, [documents, realtimeUserId])
+
+  // Subscribe to realtime document updates to reflect status changes immediately
+  useEffect(() => {
+    if (!realtimeUserId) {
+      return
+    }
+
+    const channel = supabase
+      .channel(`documents-status-${realtimeUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'documents', filter: `user_id=eq.${realtimeUserId}` },
+        (payload) => {
+          const newDoc = payload.new as Document | null
+          const oldDoc = payload.old as Document | null
+
+          setDocuments(prev => {
+            if (payload.eventType === 'DELETE' && oldDoc?.id) {
+              return prev.filter(doc => doc.id !== oldDoc.id)
+            }
+
+            if (!newDoc) {
+              return prev
+            }
+
+            if (payload.eventType === 'INSERT') {
+              const exists = prev.some(doc => doc.id === newDoc.id)
+              if (exists) {
+                return prev.map(doc => doc.id === newDoc.id ? { ...doc, ...newDoc } : doc)
+              }
+              return [...prev, newDoc]
+            }
+
+            if (payload.eventType === 'UPDATE') {
+              let found = false
+              const updated = prev.map(doc => {
+                if (doc.id === newDoc.id) {
+                  found = true
+                  return { ...doc, ...newDoc }
+                }
+                return doc
+              })
+              if (!found) {
+                return [...prev, newDoc]
+              }
+              return updated
+            }
+
+            return prev
+          })
+
+          if (payload.eventType === 'DELETE' && oldDoc?.id) {
+            setDocumentStatuses(prev => {
+              const next = new Map(prev)
+              next.delete(oldDoc.id)
+              return next
+            })
+          }
+
+          if (payload.eventType === 'UPDATE' && newDoc?.id) {
+            const terminalStatuses: Document['status'][] = ['completed', 'error', 'cancelled', 'cancelling']
+            if (terminalStatuses.includes(newDoc.status)) {
+              setDocumentStatuses(prev => {
+                const next = new Map(prev)
+                next.delete(newDoc.id)
+                return next
+              })
+            }
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [supabase, realtimeUserId])
 
   // Search mode handlers
   const handleSetSearchModeDocument = useCallback((document: Document) => {
@@ -250,7 +362,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
 
       closeRenameDialog()
     } catch (error) {
-      console.error('Error renaming document:', error)
+      clientLogger.error('Error renaming document:', error)
       alert('Failed to rename document. Please try again.')
     } finally {
       setRenameDialog(prev => ({ ...prev, isRenaming: false }))
@@ -269,7 +381,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
       const url = window.URL.createObjectURL(blob)
       window.open(url, '_blank')
     } catch (error) {
-      console.error('Error viewing document:', error)
+      clientLogger.error('Error viewing document:', error)
       alert('Failed to view document. Please try again.')
     }
   }
@@ -309,10 +421,10 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
         return next
       })
 
-      console.log('Processing cancelled successfully:', result)
+      clientLogger.info('Processing cancelled successfully:', result)
 
     } catch (error) {
-      console.error('Error cancelling processing:', error)
+      clientLogger.error('Error cancelling processing:', error)
       // Revert optimistic update on error
       await fetchDocuments()
       alert(error instanceof Error ? error.message : 'Failed to cancel processing. Please try again.')
@@ -349,7 +461,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
       })
 
     } catch (error) {
-      console.error('Error retrying document processing:', error)
+      clientLogger.error('Error retrying document processing:', error)
       const message = error instanceof Error ? error.message : 'Failed to retry processing. Please try again.'
       alert(message)
     } finally {
@@ -447,7 +559,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
             const message = incomingError || existingError || 'Document processing failed'
             updatedDoc.processing_error = message
           } else if ('processing_error' in updatedDoc) {
-            delete (updatedDoc as any).processing_error
+            updatedDoc.processing_error = null
           }
 
           return updatedDoc
@@ -458,7 +570,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
           fetchDocuments(false)
         }
       } catch (error) {
-        console.error('Error polling document statuses:', error)
+        clientLogger.error('Error polling document statuses:', error)
       }
     }
 
@@ -492,10 +604,10 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
       try {
         const response = await fetch('/api/test/process-jobs')
         if (!response.ok) {
-          console.warn('Manual cron trigger returned non-OK response')
+          clientLogger.warn('Manual cron trigger returned non-OK response')
         }
       } catch (error) {
-        console.warn('Failed to trigger manual cron processing', error)
+        clientLogger.warn('Failed to trigger manual cron processing', error)
       }
     }
 
@@ -595,7 +707,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
       }
 
     } catch (error) {
-      console.error('Error deleting document:', error)
+      clientLogger.error('Error deleting document:', error)
       alert('Failed to delete document. Please try again.')
     } finally {
       setDeleteDialog(prev => {
@@ -623,7 +735,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
       setSelectedDocuments(new Set())
       setIsSelectMode(false)
     } catch (error) {
-      console.error('Error in bulk delete:', error)
+      clientLogger.error('Error in bulk delete:', error)
       setBulkDeleteState(prev => ({ ...prev, isDeleting: false }))
       setShowBulkDeleteDialog(false)
     }
@@ -647,7 +759,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
       a.click()
       window.URL.revokeObjectURL(url)
     } catch (error) {
-      console.error('Error downloading document:', error)
+      clientLogger.error('Error downloading document:', error)
       alert('Failed to download document. Please try again.')
     }
   }
@@ -660,7 +772,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
   // Refresh when trigger changes
   useEffect(() => {
     if (refreshTrigger > 0) {
-      console.warn('📡 Refreshing document list after upload')
+      clientLogger.warn('📡 Refreshing document list after upload')
       fetchDocuments(false)
     }
   }, [refreshTrigger, fetchDocuments])
@@ -1247,25 +1359,25 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                                     {document.metadata?.law_firm && (
                                       <div className="flex items-center gap-1">
                                         <Building className="h-3 w-3" />
-                                        {LAW_FIRM_OPTIONS.find(opt => opt.value === document.metadata?.law_firm as any)?.label || String(document.metadata?.law_firm)}
+                        {resolveOptionLabel(document.metadata?.law_firm ?? '', LAW_FIRM_OPTIONS)}
                                       </div>
                                     )}
                                     {document.metadata?.fund_manager && (
                                       <div className="flex items-center gap-1">
                                         <Users className="h-3 w-3" />
-                                        {FUND_MANAGER_OPTIONS.find(opt => opt.value === document.metadata?.fund_manager as any)?.label || String(document.metadata?.fund_manager)}
+                        {resolveOptionLabel(document.metadata?.fund_manager ?? '', FUND_MANAGER_OPTIONS)}
                                       </div>
                                     )}
                                     {document.metadata?.fund_admin && (
                                       <div className="flex items-center gap-1">
                                         <Briefcase className="h-3 w-3" />
-                                        {FUND_ADMIN_OPTIONS.find(opt => opt.value === document.metadata?.fund_admin as any)?.label || String(document.metadata?.fund_admin)}
+                        {resolveOptionLabel(document.metadata?.fund_admin ?? '', FUND_ADMIN_OPTIONS)}
                                       </div>
                                     )}
                                     {document.metadata?.jurisdiction && (
                                       <div className="flex items-center gap-1">
                                         <Globe className="h-3 w-3" />
-                                        {JURISDICTION_OPTIONS.find(opt => opt.value === document.metadata?.jurisdiction as any)?.label || String(document.metadata?.jurisdiction)}
+                        {resolveOptionLabel(document.metadata?.jurisdiction ?? '', JURISDICTION_OPTIONS)}
                                       </div>
                                     )}
                                   </div>
@@ -1599,26 +1711,21 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={renameDialog.isRenaming}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              asChild
+            <Button
+              type="button"
+              onClick={handleRenameDocument}
               disabled={renameDialog.isRenaming || !renameDialog.newTitle.trim()}
+              className="min-w-[140px]"
             >
-              <Button
-                type="button"
-                onClick={handleRenameDocument}
-                disabled={renameDialog.isRenaming || !renameDialog.newTitle.trim()}
-                className="min-w-[140px]"
-              >
-                {renameDialog.isRenaming ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Renaming...
-                  </>
-                ) : (
-                  'Rename Document'
-                )}
-              </Button>
-            </AlertDialogAction>
+              {renameDialog.isRenaming ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Renaming...
+                </>
+              ) : (
+                'Rename Document'
+              )}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1680,3 +1787,9 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
 }
 
 export default EnhancedDocumentList
+const resolveOptionLabel = (value: string | null | undefined, options: { value: string; label: string }[]): string => {
+  if (!value) {
+    return ''
+  }
+  return options.find(option => option.value === value)?.label ?? value
+}

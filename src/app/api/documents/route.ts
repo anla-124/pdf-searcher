@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { PaginationUtils, DatabasePagination } from '@/lib/utils/pagination'
 import { DatabaseDocumentWithContent } from '@/types/external-apis'
+import { logger } from '@/lib/logger'
+import type { PostgrestResponse } from '@supabase/supabase-js'
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,7 +31,7 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
 
-    console.warn(`📋 GET /api/documents: Fetching documents for user ${user.id}`)
+    logger.info('Documents API: fetching documents for user', { userId: user.id })
 
     // Get total count for pagination (with same filters)
     let countQuery = supabase
@@ -102,11 +104,11 @@ export async function GET(request: NextRequest) {
       countQuery
     ])
 
-    const { data: documents, error: dbError } = documentsResult as { data: DatabaseDocumentWithContent[] | null; error: any }
+    const { data: documents, error: dbError } = documentsResult as PostgrestResponse<DatabaseDocumentWithContent>
     const { count } = countResult
 
     if (dbError) {
-      console.error('📋 Documents API: Database error:', dbError)
+      logger.error('Documents API: database error', dbError)
       return NextResponse.json({ 
         error: 'Failed to fetch documents',
         code: 'DATABASE_ERROR',
@@ -156,7 +158,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(enhancedResponse)
 
   } catch (error) {
-    console.error('Documents API error:', error)
+    logger.error('Documents API error', error instanceof Error ? error : new Error(String(error)))
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { generateAndIndexEmbeddings } from '@/lib/document-processing'
+import { computeAndStoreCentroid } from '@/lib/document-processing'
+import { DEFAULT_CHUNK_STRIDE } from '@/lib/constants/chunking'
 
 export async function POST(_request: NextRequest) {
   try {
@@ -40,7 +42,11 @@ export async function POST(_request: NextRequest) {
         
         // Generate embeddings using the legacy function (simpler, no page tracking needed)
         await generateAndIndexEmbeddings(doc.id, doc.extracted_text)
-        
+
+        // Compute and store centroid for similarity search
+        const chunks = Math.ceil(doc.extracted_text.length / DEFAULT_CHUNK_STRIDE) // Rough estimate
+        await computeAndStoreCentroid(doc.id, chunks)
+
         // Update document metadata to remove embeddings_skipped flag
         const updatedMetadata = { ...doc.metadata }
         delete updatedMetadata.embeddings_skipped

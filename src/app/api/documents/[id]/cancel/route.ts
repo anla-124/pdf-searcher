@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { logger } from '@/lib/logger'
+import { cleanupCancelledDocument } from '@/lib/document-processing'
 
 /**
  * Cancel document processing
@@ -48,7 +49,7 @@ export async function POST(
       )
     }
 
-    // 3. Update document status to cancelled
+    // 3. Update document status to cancelled (this will trigger cancellation checks in processing)
     const { error: updateDocError } = await supabase
       .from('documents')
       .update({
@@ -74,7 +75,7 @@ export async function POST(
 
     if (jobsError) {
       logger.error('Failed to fetch jobs', jobsError, { documentId })
-      // Don't throw - document is already cancelled
+      // Continue with cleanup anyway
     } else if (jobs && jobs.length > 0) {
       // Cancel all active jobs for this document
       const { error: cancelJobsError } = await supabase
@@ -93,7 +94,6 @@ export async function POST(
 
       if (cancelJobsError) {
         logger.error('Failed to cancel jobs', cancelJobsError, { documentId })
-        // Don't throw - document is already cancelled
       } else {
         logger.info('Cancelled processing jobs', {
           documentId,
@@ -122,7 +122,6 @@ export async function POST(
             documentId,
             batchOperationIds
           })
-          // Don't throw - document and jobs are already cancelled
         } else {
           logger.info('Cancelled batch operations', {
             documentId,
@@ -132,33 +131,43 @@ export async function POST(
       }
     }
 
-    // 6. Update processing_status table
-    const { error: statusError } = await supabase
-      .from('processing_status')
-      .update({
-        status: 'cancelled',
-        progress: 0,
-        message: 'Processing cancelled by user',
-        updated_at: new Date().toISOString()
+    // 6. Clean up all partial data (embeddings, vectors, files, etc.)
+    logger.info('Starting cleanup of partial data for cancelled document', { documentId })
+
+    try {
+      // Wait a moment to let processing detect the cancellation
+      // This gives the processing loop a chance to clean up gracefully
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // Trigger full cleanup - removes ALL partial data from everywhere
+      await cleanupCancelledDocument(documentId)
+
+      logger.info('Successfully cleaned up all partial data', {
+        documentId,
+        title: document.title
       })
-      .eq('document_id', documentId)
 
-    if (statusError) {
-      logger.error('Failed to update processing status', statusError, { documentId })
-      // Don't throw - main cancellation is done
+      return NextResponse.json({
+        success: true,
+        message: 'Processing cancelled and all data cleaned up successfully',
+        documentId,
+        status: 'deleted', // Document is fully deleted
+        cleanedUp: true
+      })
+
+    } catch (cleanupError) {
+      logger.error('Failed to cleanup partial data', cleanupError as Error, { documentId })
+
+      // Even if cleanup fails, the document is marked as cancelled
+      return NextResponse.json({
+        success: true,
+        message: 'Processing cancelled, but cleanup may be incomplete',
+        documentId,
+        status: 'cancelled',
+        cleanedUp: false,
+        cleanupError: cleanupError instanceof Error ? cleanupError.message : 'Unknown error'
+      })
     }
-
-    logger.info('Document processing cancelled successfully', {
-      documentId,
-      title: document.title
-    })
-
-    return NextResponse.json({
-      success: true,
-      message: 'Processing cancelled successfully',
-      documentId,
-      status: 'cancelled'
-    })
 
   } catch (error) {
     logger.error('Failed to cancel document processing', error as Error, {

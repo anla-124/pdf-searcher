@@ -17,7 +17,7 @@ function getPineconeClient() {
   return pinecone
 }
 
-function getPineconeIndex() {
+export function getPineconeIndex() {
   if (!index) {
     index = getPineconeClient().Index(process.env['PINECONE_INDEX_NAME']!)
   }
@@ -88,13 +88,17 @@ export async function searchSimilarDocuments(
     filter?: Record<string, any>
     threshold?: number
     userId?: string
+    pageRange?: {
+      start_page: number
+      end_page: number
+    }
   } = {}
 ): Promise<SimilaritySearchResult[]> {
   try {
-    const { topK = 10, filter = {}, threshold = 0.7 } = options
+    const { topK = 10, filter = {}, threshold = 0.7, pageRange } = options
 
-    // Get the vector for the source document
-    const sourceVector = await getDocumentVector(documentId)
+    // Get the vector for the source document (with optional page range)
+    const sourceVector = await getDocumentVector(documentId, pageRange)
     if (!sourceVector) {
       throw new Error(`No vector found for document ${documentId}`)
     }
@@ -184,11 +188,13 @@ export async function vectorSearch(
 export async function deleteDocumentFromPinecone(documentId: string): Promise<void> {
   try {
     // 1. Get all vector IDs from the database for this document
+    // CRITICAL: Override Supabase's default 1000 row limit to get ALL chunks
     const supabase = await createServiceClient()
     const { data: chunks, error: dbError } = await supabase
       .from('document_embeddings')
       .select('chunk_index')
       .eq('document_id', documentId)
+      .range(0, 999999) // Override default 1000 row limit
 
     if (dbError) {
       throw new Error(`Failed to fetch chunk info for deletion from database: ${dbError.message}`)
@@ -206,10 +212,21 @@ export async function deleteDocumentFromPinecone(documentId: string): Promise<vo
       return
     }
 
-    // 2. Delete vectors from Pinecone by ID using the v6 SDK
-    await getPineconeIndex().deleteMany(vectorIds)
-    
-    console.warn(`✅ Deleted ${vectorIds.length} vectors for document ${documentId} from Pinecone`)
+    // 2. Delete vectors from Pinecone by ID in batches (Pinecone limit: 1000 per call)
+    const BATCH_SIZE = 1000
+    let totalAttempted = 0
+
+    for (let i = 0; i < vectorIds.length; i += BATCH_SIZE) {
+      const batch = vectorIds.slice(i, i + BATCH_SIZE)
+      await getPineconeIndex().deleteMany(batch)
+      totalAttempted += batch.length
+
+      if (vectorIds.length > BATCH_SIZE) {
+        console.warn(`  Deleted batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(vectorIds.length / BATCH_SIZE)}: ${batch.length} vector IDs`)
+      }
+    }
+
+    console.warn(`✅ Attempted to delete ${totalAttempted} vectors for document ${documentId} from Pinecone (based on ${chunks.length} database records)`)
   } catch (error) {
     console.error(`❌ Failed to delete vectors for document ${documentId}:`, error)
     throw error
@@ -227,11 +244,13 @@ export async function updateDocumentMetadataInPinecone(
     console.warn(`📝 Starting Pinecone metadata update for document ${documentId}`)
     
     // 1. Get all vector IDs from the database
+    // CRITICAL: Override Supabase's default 1000 row limit to get ALL chunks
     const supabase = await createServiceClient()
     const { data: chunks, error: dbError } = await supabase
       .from('document_embeddings')
       .select('chunk_index')
       .eq('document_id', documentId)
+      .range(0, 999999) // Override default 1000 row limit
 
     if (dbError) {
       throw new Error(`Failed to fetch chunk info from database: ${dbError.message}`)
@@ -243,10 +262,17 @@ export async function updateDocumentMetadataInPinecone(
     }
 
     const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
-    
-    // 2. Fetch the full vectors from Pinecone
-    const fetchResponse = await getPineconeIndex().fetch(vectorIds)
-    const vectors = Object.values(fetchResponse.records)
+
+    // 2. Fetch the full vectors from Pinecone in batches to avoid URL length limits
+    // Pinecone supports up to 1000 vectors per fetch, but we use smaller batches to avoid 414 errors
+    const BATCH_SIZE = 50
+    const vectors: any[] = []
+
+    for (let i = 0; i < vectorIds.length; i += BATCH_SIZE) {
+      const batch = vectorIds.slice(i, i + BATCH_SIZE)
+      const fetchResponse = await getPineconeIndex().fetch(batch)
+      vectors.push(...Object.values(fetchResponse.records))
+    }
 
     if (vectors.length === 0) {
       console.warn(`No vectors found in Pinecone for document ${documentId}, skipping update.`)
@@ -280,24 +306,88 @@ export async function updateDocumentMetadataInPinecone(
 
 /**
  * Get document vector by ID
+ * If pageRange is provided, returns the centroid (average) of vectors within that page range
+ * Otherwise, returns the first chunk's vector
  */
-async function getDocumentVector(documentId: string): Promise<number[] | null> {
+async function getDocumentVector(
+  documentId: string,
+  pageRange?: {
+    start_page: number
+    end_page: number
+  }
+): Promise<number[] | null> {
   try {
     // Use a dummy vector to query for this document's vectors
-    // Create a zero vector of dimension 1536 (OpenAI embedding dimension)
+    // Create a zero vector of dimension 768 (Vertex AI embedding dimension)
     const dummyVector = new Array(768).fill(0)
-    
+
+    // Build filter with optional page range
+    const filter: Record<string, any> = {
+      document_id: { $eq: documentId }
+    }
+
+    if (pageRange) {
+      filter['page_number'] = {
+        $gte: pageRange.start_page,
+        $lte: pageRange.end_page
+      }
+      console.warn(`🔍 Fetching vectors for document ${documentId}, pages ${pageRange.start_page}-${pageRange.end_page}`)
+    }
+
     const queryResponse = await getPineconeIndex().query({
       vector: dummyVector,
-      topK: 1,
-      filter: {
-        document_id: { $eq: documentId }
-      },
+      topK: pageRange ? 10000 : 1, // Get all vectors if page range specified, otherwise just first
+      filter,
       includeValues: true,
-      includeMetadata: false
+      includeMetadata: pageRange ? true : false
     })
 
-    if (queryResponse.matches && queryResponse.matches.length > 0 && queryResponse.matches[0] && queryResponse.matches[0].values) {
+    if (!queryResponse.matches || queryResponse.matches.length === 0) {
+      console.warn(`⚠️ No vectors found for document ${documentId}${pageRange ? ` in page range ${pageRange.start_page}-${pageRange.end_page}` : ''}`)
+      return null
+    }
+
+    // If page range specified, compute centroid of all matching vectors
+    if (pageRange && queryResponse.matches.length > 1) {
+      const vectors = queryResponse.matches
+        .filter(m => m.values && m.values.length > 0)
+        .map(m => m.values as number[])
+
+      if (vectors.length === 0) return null
+
+      console.warn(`📊 Computing centroid from ${vectors.length} vectors in page range ${pageRange.start_page}-${pageRange.end_page}`)
+
+      const firstVector = vectors[0]
+      if (!firstVector) return null
+
+      const dimension = firstVector.length
+      const centroid = new Array(dimension).fill(0)
+
+      // Sum all vectors
+      for (const vector of vectors) {
+        for (let i = 0; i < dimension; i++) {
+          centroid[i] += vector[i]
+        }
+      }
+
+      // Average
+      for (let i = 0; i < dimension; i++) {
+        centroid[i] /= vectors.length
+      }
+
+      // L2 normalization for cosine similarity
+      const magnitude = Math.sqrt(centroid.reduce((sum, val) => sum + val * val, 0))
+      if (magnitude > 0) {
+        for (let i = 0; i < dimension; i++) {
+          centroid[i] /= magnitude
+        }
+      }
+
+      return centroid
+    }
+
+    // Otherwise, return first chunk's vector
+    if (queryResponse.matches[0] && queryResponse.matches[0].values) {
       return queryResponse.matches[0].values as number[]
     }
 

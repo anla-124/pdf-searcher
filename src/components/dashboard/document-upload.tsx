@@ -65,9 +65,21 @@ interface DocumentUploadProps {
   onUploadComplete?: () => void
 }
 
+interface ValidationSummary {
+  total: number
+  valid: number
+  invalid: number
+  totalWarnings: number
+  totalIssues: number
+  canProceed: boolean
+}
+
 export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
   const [files, setFiles] = useState<UploadFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [validationSummary, setValidationSummary] = useState<ValidationSummary | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const { validateFiles, getValidationSummary } = useFileValidation()
 
   const handleFileSelect = useCallback(async (selectedFiles: FileList | null) => {
@@ -108,6 +120,9 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
     }))
 
     setFiles(prev => [...prev, ...newFiles])
+    setValidationSummary(null)
+    setStatusMessage(null)
+    setError(null)
 
     try {
       // Validate files
@@ -132,11 +147,11 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
       if (summary.invalid > 0) {
         alert(`${summary.invalid} file(s) failed validation. Please check the issues and try again.`)
       } else if (summary.totalWarnings > 0) {
-        console.warn(`Validation completed with ${summary.totalWarnings} warning(s)`)
+        setValidationSummary(summary)
       }
 
     } catch (error) {
-      console.error('Validation failed:', error)
+      setError(error instanceof Error ? error.message : 'Validation failed')
       // Mark all new files as error if validation fails
       setFiles(prev => prev.map(f => 
         newFiles.some(nf => nf.id === f.id)
@@ -183,9 +198,8 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
     // Optional: Trigger batch job processing after all uploads complete
     try {
       await fetch('/api/test/process-jobs')
-      console.warn('Triggered batch job processing for all uploaded files')
-    } catch (_error) {
-      console.warn('Could not trigger batch processing (this is okay)')
+    } catch {
+      // Non-fatal: manual cron trigger unavailable
     }
   }
 
@@ -232,7 +246,7 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
           : f
       ))
 
-      console.warn(`✅ Successfully uploaded: ${uploadFile.file.name}`)
+      setStatusMessage(`Uploaded ${uploadFile.file.name}`)
       
       // Trigger document list refresh
       if (onUploadComplete) {
@@ -241,7 +255,7 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Upload failed'
-      console.error(`❌ Upload failed for ${uploadFile.file.name}:`, errorMessage)
+      setStatusMessage(`Upload failed for ${uploadFile.file.name}`)
       
       setFiles(prev => prev.map(f => 
         f.id === uploadFile.id 
@@ -398,6 +412,29 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {statusMessage && (
+          <Alert>
+            <CheckCircle className="h-4 w-4" />
+            <AlertDescription>{statusMessage}</AlertDescription>
+          </Alert>
+        )}
+
+        {validationSummary && validationSummary.totalWarnings > 0 && (
+          <Alert variant="secondary">
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              {validationSummary.totalWarnings} warning{validationSummary.totalWarnings === 1 ? '' : 's'} detected during validation. You can proceed, but review the highlighted fields.
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div
           className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
             isDragOver
