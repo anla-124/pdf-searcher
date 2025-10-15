@@ -120,7 +120,7 @@ const metadataOptions = [
   }
 ]
 
-export default function () {
+export default function uploadDocumentScenario() {
   // Select random metadata and file size
   const metadata = metadataOptions[Math.floor(Math.random() * metadataOptions.length)]
   const fileSizeKB = Math.floor(Math.random() * 2000) + 100 // 100KB to 2MB

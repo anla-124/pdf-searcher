@@ -71,7 +71,7 @@ const filters = [
   }
 ]
 
-export default function () {
+export default function searchPerformanceScenario() {
   // Select random search parameters
   const query = searchQueries[Math.floor(Math.random() * searchQueries.length)]
   const searchType = searchTypes[Math.floor(Math.random() * searchTypes.length)]

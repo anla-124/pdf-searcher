@@ -399,7 +399,7 @@ export class ErrorHandler {
   static handleApiError(error: unknown, correlationId?: string): NextResponse {
     // If it's already one of our custom errors, use it directly
     if (error instanceof BaseError) {
-      const logMetadata: any = {
+      const logMetadata: Record<string, unknown> = {
         code: error.code,
         statusCode: error.statusCode
       }
@@ -439,7 +439,7 @@ export class ErrorHandler {
 
     // Handle standard JavaScript errors
     if (error instanceof Error) {
-      const errorMetadata: any = {
+      const errorMetadata: Record<string, unknown> = {
         errorType: 'unhandled'
       }
       
@@ -474,7 +474,7 @@ export class ErrorHandler {
     }
 
     // Handle unknown errors
-    const unknownErrorMetadata: any = {
+    const unknownErrorMetadata: Record<string, unknown> = {
       errorValue: error,
       errorType: typeof error
     }

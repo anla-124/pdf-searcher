@@ -7,16 +7,16 @@ import { vi, beforeAll, afterAll } from 'vitest'
 import '@testing-library/jest-dom'
 
 // Mock environment variables for testing
-;(process.env as any)['NODE_ENV'] = 'test'
-;(process.env as any)['NEXT_PUBLIC_SUPABASE_URL'] = 'http://localhost:54321'
-;(process.env as any)['NEXT_PUBLIC_SUPABASE_ANON_KEY'] = 'test-anon-key'
-;(process.env as any)['SUPABASE_SERVICE_ROLE_KEY'] = 'test-service-role-key'
-;(process.env as any)['PINECONE_API_KEY'] = 'test-pinecone-key'
-;(process.env as any)['PINECONE_INDEX_NAME'] = 'test-index'
-;(process.env as any)['GOOGLE_CLOUD_PROJECT_ID'] = 'test-project'
-;(process.env as any)['UPSTASH_REDIS_REST_URL'] = 'http://localhost:6379'
-;(process.env as any)['UPSTASH_REDIS_REST_TOKEN'] = 'test-redis-token'
-;(process.env as any)['UNLIMITED_PROCESSING'] = 'true'
+process.env['NODE_ENV'] = 'test'
+process.env['NEXT_PUBLIC_SUPABASE_URL'] = 'http://localhost:54321'
+process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] = 'test-anon-key'
+process.env['SUPABASE_SERVICE_ROLE_KEY'] = 'test-service-role-key'
+process.env['PINECONE_API_KEY'] = 'test-pinecone-key'
+process.env['PINECONE_INDEX_NAME'] = 'test-index'
+process.env['GOOGLE_CLOUD_PROJECT_ID'] = 'test-project'
+process.env['UPSTASH_REDIS_REST_URL'] = 'http://localhost:6379'
+process.env['UPSTASH_REDIS_REST_TOKEN'] = 'test-redis-token'
+process.env['UNLIMITED_PROCESSING'] = 'true'
 
 // Global mocks for external services
 vi.mock('@supabase/supabase-js', () => ({
@@ -170,7 +170,9 @@ export const cleanup = () => {
 }
 
 // Helper for creating test documents
-export const createTestDocument = (overrides = {}) => ({
+type TestDocumentOverrides = Record<string, unknown>
+
+export const createTestDocument = (overrides: TestDocumentOverrides = {}) => ({
   id: 'test-doc-id',
   title: 'Test Document',
   filename: 'test.pdf',
@@ -211,7 +213,14 @@ afterAll(() => {
 })
 
 // Global test utilities
-;(global as any).testUtils = {
+type TestUtils = {
+  mockFetch: typeof mockFetch
+  cleanup: typeof cleanup
+  createTestDocument: typeof createTestDocument
+  createTestEmbedding: typeof createTestEmbedding
+}
+
+;(globalThis as typeof globalThis & { testUtils?: TestUtils }).testUtils = {
   mockFetch,
   cleanup,
   createTestDocument,

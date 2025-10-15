@@ -30,25 +30,45 @@ export async function GET(_request: NextRequest) {
     const batchStatuses = []
     
     for (const job of processingJobs || []) {
-      if (job.batch_operation_id) {
+      const batchOperationId = typeof job.batch_operation_id === 'string' ? job.batch_operation_id : null
+      if (batchOperationId) {
         try {
-          const batchStatus = await batchProcessor.getOperationStatus(job.batch_operation_id)
+          const batchStatus = await batchProcessor.getOperationStatus(batchOperationId)
+          const documentTitle = Array.isArray(job.documents)
+            ? job.documents[0]?.title ?? null
+            : (typeof job.documents === 'object' && job.documents !== null && 'title' in job.documents)
+              ? (job.documents as { title?: string }).title ?? null
+              : null
+          const createdAt = typeof job.created_at === 'string' ? job.created_at : null
+          const processingDuration = createdAt
+            ? Math.round((Date.now() - new Date(createdAt).getTime()) / 1000 / 60)
+            : null
+
           batchStatuses.push({
             jobId: job.id,
             documentId: job.document_id,
-            documentTitle: job.documents?.[0]?.title,
-            batchOperationId: job.batch_operation_id,
+            documentTitle,
+            batchOperationId,
             googleCloudStatus: batchStatus,
-            processingDuration: Math.round((Date.now() - new Date(job.created_at).getTime()) / 1000 / 60) // minutes
+            processingDuration
           })
         } catch (error) {
+          const documentTitle = Array.isArray(job.documents)
+            ? job.documents[0]?.title ?? null
+            : (typeof job.documents === 'object' && job.documents !== null && 'title' in job.documents)
+              ? (job.documents as { title?: string }).title ?? null
+              : null
+          const createdAt = typeof job.created_at === 'string' ? job.created_at : null
+          const processingDuration = createdAt
+            ? Math.round((Date.now() - new Date(createdAt).getTime()) / 1000 / 60)
+            : null
           batchStatuses.push({
             jobId: job.id,
             documentId: job.document_id,
-            documentTitle: job.documents?.[0]?.title,
-            batchOperationId: job.batch_operation_id,
+            documentTitle,
+            batchOperationId,
             error: error instanceof Error ? error.message : 'Unknown error',
-            processingDuration: Math.round((Date.now() - new Date(job.created_at).getTime()) / 1000 / 60) // minutes
+            processingDuration
           })
         }
       }

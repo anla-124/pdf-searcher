@@ -1,10 +1,25 @@
+type RetryableError = {
+  code?: number | string
+  status?: number
+  message?: string
+  details?: string
+  [key: string]: unknown
+}
+
+const toRetryableError = (error: unknown): RetryableError => {
+  if (error && typeof error === 'object') {
+    return error as RetryableError
+  }
+  return { message: typeof error === 'string' ? error : String(error) }
+}
+
 interface RetryOptions {
   maxAttempts: number
   baseDelay: number
   maxDelay: number
   backoffFactor: number
-  retryableErrors: (error: any) => boolean
-  onRetry?: (attempt: number, error: any) => void
+  retryableErrors: (error: RetryableError) => boolean
+  onRetry?: (attempt: number, error: RetryableError) => void
 }
 
 interface RetryResult<T> {
@@ -21,20 +36,22 @@ export class SmartRetry {
     baseDelay: 1000, // 1 second
     maxDelay: 30000, // 30 seconds
     backoffFactor: 2,
-    retryableErrors: (error: any) => {
+    retryableErrors: (error: RetryableError) => {
+      const includes = (term: string) => Boolean(error.message?.includes(term))
       // Enhanced retryable conditions for enterprise scale
       if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') return true
       if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') return true
-      if (error.message?.includes('timeout')) return true
-      if (error.message?.includes('network')) return true
-      if (error.message?.includes('connection')) return true
-      if (error.message?.includes('quota')) return true
-      if (error.message?.includes('rate limit')) return true
-      if (error.status >= 500 && error.status < 600) return true // Server errors
-      if (error.status === 429) return true // Rate limiting
-      if (error.status === 503) return true // Service unavailable
-      if (error.status === 502) return true // Bad gateway
-      if (error.status === 504) return true // Gateway timeout
+      if (includes('timeout')) return true
+      if (includes('network')) return true
+      if (includes('connection')) return true
+      if (includes('quota')) return true
+      if (includes('rate limit')) return true
+      const status = typeof error.status === 'number' ? error.status : undefined
+      if (status !== undefined && status >= 500 && status < 600) return true // Server errors
+      if (status === 429) return true // Rate limiting
+      if (status === 503) return true // Service unavailable
+      if (status === 502) return true // Bad gateway
+      if (status === 504) return true // Gateway timeout
       return false
     }
   }
@@ -46,10 +63,12 @@ export class SmartRetry {
       baseDelay: 2000,
       maxDelay: 60000,
       backoffFactor: 2.5,
-      retryableErrors: (error: any) => {
-        return error.status === 429 || error.status >= 500 || 
-               error.message?.includes('quota') || 
-               error.message?.includes('rate')
+      retryableErrors: (error: RetryableError) => {
+        const status = typeof error.status === 'number' ? error.status : undefined
+        const includes = (term: string) => Boolean(error.message?.includes(term))
+        return (status === 429 || (status !== undefined && status >= 500) ||
+               includes('quota') ||
+               includes('rate'))
       }
     },
     pinecone: {
@@ -57,9 +76,11 @@ export class SmartRetry {
       baseDelay: 1500,
       maxDelay: 45000,
       backoffFactor: 2,
-      retryableErrors: (error: any) => {
-        return error.status === 429 || error.status >= 500 ||
-               error.message?.includes('timeout')
+      retryableErrors: (error: RetryableError) => {
+        const status = typeof error.status === 'number' ? error.status : undefined
+        const includes = (term: string) => Boolean(error.message?.includes(term))
+        return (status === 429 || (status !== undefined && status >= 500) ||
+               includes('timeout'))
       }
     },
     documentAI: {
@@ -67,10 +88,12 @@ export class SmartRetry {
       baseDelay: 3000,
       maxDelay: 90000,
       backoffFactor: 3,
-      retryableErrors: (error: any) => {
-        return error.status === 429 || error.status >= 500 ||
-               error.message?.includes('quota') ||
-               error.message?.includes('limit')
+      retryableErrors: (error: RetryableError) => {
+        const status = typeof error.status === 'number' ? error.status : undefined
+        const includes = (term: string) => Boolean(error.message?.includes(term))
+        return (status === 429 || (status !== undefined && status >= 500) ||
+               includes('quota') ||
+               includes('limit'))
       }
     }
   }
@@ -113,7 +136,9 @@ export class SmartRetry {
         lastError = error instanceof Error ? error : new Error(String(error))
         
         // Check if this error is retryable
-        if (!config.retryableErrors(error)) {
+        const retryCandidate = toRetryableError(error)
+
+        if (!config.retryableErrors(retryCandidate)) {
           console.error(`❌ Non-retryable error on attempt ${attempt}:`, lastError.message)
           break
         }
@@ -133,7 +158,7 @@ export class SmartRetry {
         console.warn(`🔄 Retry attempt ${attempt}/${config.maxAttempts} in ${delay}ms. Error:`, lastError.message)
         
         // Call retry callback if provided
-        config.onRetry?.(attempt, error)
+        config.onRetry?.(attempt, retryCandidate)
         
         // Wait before retry
         await new Promise(resolve => setTimeout(resolve, delay))
@@ -157,15 +182,18 @@ export const RetryConfigs = {
     baseDelay: 2000,
     maxDelay: 60000,
     backoffFactor: 2.5,
-    retryableErrors: (error: any) => {
-      if (error.code === 3 && error.details?.includes('rate limit')) return true
+    retryableErrors: (error: RetryableError) => {
+      const status = typeof error.status === 'number' ? error.status : undefined
+      const includes = (term: string) => Boolean(error.message?.includes(term))
+      if (error.code === 3 && Boolean(error.details?.includes('rate limit'))) return true
       if (error.code === 14) return true // Unavailable
       if (error.code === 4) return true // Deadline exceeded
-      if (error.message?.includes('timeout')) return true
-      if (error.message?.includes('UNAVAILABLE')) return true
+      if (includes('timeout')) return true
+      if (includes('UNAVAILABLE')) return true
+      if (status === 503 || status === 429) return true
       return false
     },
-    onRetry: (attempt: number, error: any) => {
+    onRetry: (attempt: number, error: RetryableError) => {
       console.warn(`🔄 Document AI retry ${attempt}: ${error.message}`)
     }
   },
@@ -176,15 +204,17 @@ export const RetryConfigs = {
     baseDelay: 3000,
     maxDelay: 45000,
     backoffFactor: 2,
-    retryableErrors: (error: any) => {
-      if (error.status === 429) return true // Rate limit
-      if (error.status === 503) return true // Service unavailable
-      if (error.status === 502) return true // Bad gateway
-      if (error.message?.includes('quota')) return true
-      if (error.message?.includes('RATE_LIMIT_EXCEEDED')) return true
+    retryableErrors: (error: RetryableError) => {
+      const status = typeof error.status === 'number' ? error.status : undefined
+      const includes = (term: string) => Boolean(error.message?.includes(term))
+      if (status === 429) return true // Rate limit
+      if (status === 503) return true // Service unavailable
+      if (status === 502) return true // Bad gateway
+      if (includes('quota')) return true
+      if (includes('RATE_LIMIT_EXCEEDED')) return true
       return false
     },
-    onRetry: (attempt: number, error: any) => {
+    onRetry: (attempt: number, error: RetryableError) => {
       console.warn(`🔄 Vertex AI embeddings retry ${attempt}: ${error.message}`)
     }
   },
@@ -195,14 +225,16 @@ export const RetryConfigs = {
     baseDelay: 1500,
     maxDelay: 20000,
     backoffFactor: 2,
-    retryableErrors: (error: any) => {
-      if (error.status >= 500) return true
-      if (error.message?.includes('timeout')) return true
-      if (error.message?.includes('connection')) return true
-      if (error.message?.includes('temporary')) return true
+    retryableErrors: (error: RetryableError) => {
+      const status = typeof error.status === 'number' ? error.status : undefined
+      const includes = (term: string) => Boolean(error.message?.includes(term))
+      if (status !== undefined && status >= 500) return true
+      if (includes('timeout')) return true
+      if (includes('connection')) return true
+      if (includes('temporary')) return true
       return false
     },
-    onRetry: (attempt: number, error: any) => {
+    onRetry: (attempt: number, error: RetryableError) => {
       console.warn(`🔄 Pinecone indexing retry ${attempt}: ${error.message}`)
     }
   },
@@ -213,14 +245,16 @@ export const RetryConfigs = {
     baseDelay: 1000,
     maxDelay: 15000,
     backoffFactor: 2,
-    retryableErrors: (error: any) => {
+    retryableErrors: (error: RetryableError) => {
+      const status = typeof error.status === 'number' ? error.status : undefined
       if (error.code === 'PGRST301') return true // Connection error
-      if (error.message?.includes('timeout')) return true
-      if (error.message?.includes('connection')) return true
-      if (error.status >= 500) return true
+      const includes = (term: string) => Boolean(error.message?.includes(term))
+      if (includes('timeout')) return true
+      if (includes('connection')) return true
+      if (status !== undefined && status >= 500) return true
       return false
     },
-    onRetry: (attempt: number, error: any) => {
+    onRetry: (attempt: number, error: RetryableError) => {
       console.warn(`🔄 Supabase operation retry ${attempt}: ${error.message}`)
     }
   },
@@ -231,14 +265,16 @@ export const RetryConfigs = {
     baseDelay: 2000,
     maxDelay: 30000,
     backoffFactor: 2,
-    retryableErrors: (error: any) => {
-      if (error.status >= 500) return true
-      if (error.message?.includes('network')) return true
-      if (error.message?.includes('timeout')) return true
-      if (error.message?.includes('connection')) return true
+    retryableErrors: (error: RetryableError) => {
+      const status = typeof error.status === 'number' ? error.status : undefined
+      const includes = (term: string) => Boolean(error.message?.includes(term))
+      if (status !== undefined && status >= 500) return true
+      if (includes('network')) return true
+      if (includes('timeout')) return true
+      if (includes('connection')) return true
       return false
     },
-    onRetry: (attempt: number, error: any) => {
+    onRetry: (attempt: number, error: RetryableError) => {
       console.warn(`🔄 File upload retry ${attempt}: ${error.message}`)
     }
   }

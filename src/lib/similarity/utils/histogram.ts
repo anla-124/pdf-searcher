@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger'
+
 /**
  * Histogram utilities for similarity distribution analysis
  * Used for threshold calibration (future enhancement)
@@ -166,12 +168,22 @@ export function suggestThreshold(
  * Log histogram to console for debugging
  */
 export function logHistogram(bins: HistogramBin[], title: string = 'Similarity Distribution'): void {
-  console.log(`\n=== ${title} ===`)
+  logger.info(`Histogram: ${title}`, {
+    buckets: bins.map(bin => ({
+      min: bin.min,
+      max: bin.max,
+      count: bin.count,
+      percentage: bin.percentage
+    }))
+  })
   for (const bin of bins) {
     const bar = '█'.repeat(Math.round(bin.percentage / 2))  // Scale to fit console
-    console.log(
-      `${bin.min.toFixed(2)}-${bin.max.toFixed(2)}: ${bar} ${bin.count} (${bin.percentage.toFixed(1)}%)`
-    )
+    logger.info('Histogram bucket', {
+      range: `${bin.min.toFixed(2)}-${bin.max.toFixed(2)}`,
+      bar,
+      count: bin.count,
+      percentage: Number(bin.percentage.toFixed(1))
+    })
   }
 }
 
@@ -179,12 +191,13 @@ export function logHistogram(bins: HistogramBin[], title: string = 'Similarity D
  * Log statistics to console
  */
 export function logStats(stats: HistogramStats, title: string = 'Statistics'): void {
-  console.log(`\n=== ${title} ===`)
-  console.log(`Mean:   ${stats.mean.toFixed(3)}`)
-  console.log(`Median: ${stats.median.toFixed(3)}`)
-  console.log(`StdDev: ${stats.stdDev.toFixed(3)}`)
-  console.log(`Min:    ${stats.min.toFixed(3)}`)
-  console.log(`Max:    ${stats.max.toFixed(3)}`)
-  console.log(`Q25:    ${stats.q25.toFixed(3)}`)
-  console.log(`Q75:    ${stats.q75.toFixed(3)}`)
+  logger.info(`Histogram stats: ${title}`, {
+    mean: Number(stats.mean.toFixed(3)),
+    median: Number(stats.median.toFixed(3)),
+    stdDev: Number(stats.stdDev.toFixed(3)),
+    min: Number(stats.min.toFixed(3)),
+    max: Number(stats.max.toFixed(3)),
+    q25: Number(stats.q25.toFixed(3)),
+    q75: Number(stats.q75.toFixed(3))
+  })
 }

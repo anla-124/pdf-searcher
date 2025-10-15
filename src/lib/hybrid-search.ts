@@ -1,7 +1,7 @@
 import { vectorSearch } from '@/lib/pinecone'
 import { generateEmbeddings } from '@/lib/embeddings-vertex'
 import { createServiceClient } from '@/lib/supabase/server'
-import { AdvancedRankingEngine } from '@/lib/advanced-ranking'
+import { AdvancedRankingEngine, type RankingContext } from '@/lib/advanced-ranking'
 import type { BusinessMetadata } from '@/types/external-apis'
 
 interface SearchResult {
@@ -120,7 +120,7 @@ export class HybridSearchEngine {
       const userPreferences = await AdvancedRankingEngine.getUserRankingPreferences(userId)
       
       // Create ranking context
-      const rankingContext: any = {
+      const rankingContext: RankingContext = {
         userId,
         ...(userPreferences && { userPreferences }),
         ...(businessContext && { businessContext })
@@ -178,7 +178,7 @@ export class HybridSearchEngine {
     query: string,
     limit: number,
     filters: Record<string, unknown>,
-    userId: string
+    _userId: string
   ): Promise<SearchResult[]> {
     // Generate query embedding
     const queryEmbedding = await generateEmbeddings(query)
@@ -200,27 +200,39 @@ export class HybridSearchEngine {
     const documentMap = new Map<string, SearchResult>()
     
     for (const result of vectorResults) {
-      if (!result.metadata) continue
-      const docId = (result.metadata as any)['document_id'] as string
+      const metadata = result.metadata as Record<string, unknown> | undefined
+      if (!metadata) continue
+
+      const docIdValue = metadata['document_id']
+      if (typeof docIdValue !== 'string') continue
+      const docId = docIdValue
+
+      const chunkTextValue = metadata['text']
+      const chunkText = typeof chunkTextValue === 'string' ? chunkTextValue : ''
+
+      const pageNumberValue = metadata['page_number']
+      const pageNumber = typeof pageNumberValue === 'number' ? pageNumberValue : undefined
+
+      const metadataRecord = metadata as BusinessMetadata & Record<string, unknown>
       
       if (!documentMap.has(docId)) {
         documentMap.set(docId, {
           documentId: docId,
           score: result.score,
           algorithm: 'semantic-vector',
-          metadata: result.metadata as BusinessMetadata & Record<string, unknown>,
+          metadata: metadataRecord,
           chunks: [{
-            text: ((result.metadata as any)['text'] as string) || '',
+            text: chunkText,
             score: result.score,
-            pageNumber: (result.metadata as any)['page_number'] as number
+            pageNumber
           }]
         })
       } else {
         const existing = documentMap.get(docId)!
         existing.chunks.push({
-          text: ((result.metadata as any)['text'] as string) || '',
+          text: chunkText,
           score: result.score,
-          pageNumber: (result.metadata as any)['page_number'] as number
+          pageNumber
         })
         // Update overall score (use max score for now, could be more sophisticated)
         existing.score = Math.max(existing.score, result.score)
@@ -287,29 +299,47 @@ export class HybridSearchEngine {
       return []
     }
 
-    // Calculate keyword-based scores
-    return documents.map(doc => {
-      const extractedText = doc.document_content?.[0]?.extracted_text || ''
-      const score = this.calculateKeywordScore(query, extractedText, doc.title)
-      
-      return {
-        documentId: doc.id,
+    const keywordMatches: SearchResult[] = []
+
+    for (const doc of documents as Array<Record<string, unknown>>) {
+      const docId = typeof doc['id'] === 'string' ? doc['id'] : null
+      if (!docId) continue
+
+      const title = typeof doc['title'] === 'string' ? doc['title'] : ''
+      const filename = typeof doc['filename'] === 'string' ? doc['filename'] : ''
+      const metadata = (doc['metadata'] && typeof doc['metadata'] === 'object')
+        ? doc['metadata'] as Record<string, unknown>
+        : {}
+
+      const documentContent = Array.isArray(doc['document_content']) ? doc['document_content'] : []
+      const extractedTextEntry = documentContent[0]
+      const extractedText = extractedTextEntry && typeof extractedTextEntry === 'object'
+        && extractedTextEntry !== null && typeof (extractedTextEntry as Record<string, unknown>)['extracted_text'] === 'string'
+        ? (extractedTextEntry as { extracted_text: string }).extracted_text
+        : ''
+
+      const score = this.calculateKeywordScore(query, extractedText, title)
+
+      keywordMatches.push({
+        documentId: docId,
         score,
         algorithm: 'keyword-matching',
         metadata: {
-          document_id: doc.id,
-          title: doc.title,
-          filename: doc.filename,
-          ...doc.metadata
+          document_id: docId,
+          title,
+          filename,
+          ...metadata
         },
         chunks: [{
           text: this.extractRelevantText(query, extractedText),
           score
         }]
-      }
-    })
-    .filter(result => result.score > 0.1) // Filter out very low scores
-    .sort((a, b) => b.score - a.score)
+      })
+    }
+
+    return keywordMatches
+      .filter(result => result.score > 0.1)
+      .sort((a, b) => b.score - a.score)
   }
 
   private static hybridRanking(

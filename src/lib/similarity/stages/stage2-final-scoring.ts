@@ -324,6 +324,12 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
       .eq('document_id', documentId)
       .order('chunk_index', { ascending: true })
       .range(start, end)
+      .returns<Array<{
+        chunk_index: number | null
+        page_number: number | null
+        embedding: number[] | string
+        chunk_text: string | null
+      }>>()
 
     if (error) {
       if ((error as { code?: string }).code === '57014' && currentPageSize > 25) {
@@ -346,7 +352,16 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
       break
     }
 
-    allChunks.push(...data)
+    const sanitized = data
+      .filter(record => typeof record.chunk_index === 'number')
+      .map(record => ({
+        chunk_index: record.chunk_index as number,
+        page_number: typeof record.page_number === 'number' ? record.page_number : null,
+        embedding: record.embedding,
+        chunk_text: record.chunk_text
+      }))
+
+    allChunks.push(...sanitized)
     start += data.length
     currentPageSize = defaultPageSize
 
@@ -361,13 +376,27 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
 
   // CRITICAL: Deduplicate chunks by chunk_index (some documents have duplicates)
   const seen = new Set<number>()
-  const uniqueChunks = allChunks.filter(chunk => {
+  const uniqueChunks = allChunks.reduce<Array<{
+    chunk_index: number
+    page_number: number | null
+    embedding: number[] | string
+    chunk_text: string | null
+  }>>((acc, chunk) => {
+    if (typeof chunk.chunk_index !== 'number') {
+      return acc
+    }
     if (seen.has(chunk.chunk_index)) {
-      return false
+      return acc
     }
     seen.add(chunk.chunk_index)
-    return true
-  })
+    acc.push({
+      chunk_index: chunk.chunk_index,
+      page_number: typeof chunk.page_number === 'number' ? chunk.page_number : null,
+      embedding: chunk.embedding,
+      chunk_text: typeof chunk.chunk_text === 'string' ? chunk.chunk_text : null
+    })
+    return acc
+  }, [])
 
   logger.info('Stage 2: fetched candidate chunks', {
     documentId,

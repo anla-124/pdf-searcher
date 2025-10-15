@@ -171,7 +171,7 @@ export async function stage0HybridRetrieval(
 ): Promise<Stage0Result> {
 
   const startTime = Date.now()
-  const { topK = 150, alpha = 0.7 } = options
+  const { topK = 150 } = options
 
   // TODO: Implement BM25 retrieval
   // 1. Get dense results (centroid)
@@ -182,6 +182,7 @@ export async function stage0HybridRetrieval(
 
   // 3. Reciprocal Rank Fusion (RRF)
   // const fusedResults = reciprocalRankFusion(denseResults, sparseResults, k=60)
+  void reciprocalRankFusion
 
   // For now, just return dense results
   logger.warn('Stage 0 hybrid retrieval fallback to dense results', {

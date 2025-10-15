@@ -73,7 +73,7 @@ export async function DELETE(
       .select('file_path, filename')
       .eq('id', id)
       .eq('user_id', user.id)
-      .single()
+      .single<{ file_path: string | null; filename: string | null }>()
 
     if (fetchError) {
       if (fetchError.code === 'PGRST116') {
@@ -83,12 +83,17 @@ export async function DELETE(
     }
 
     // Delete from storage
-    const { error: storageError } = await supabase.storage
-      .from('documents')
-      .remove([document.file_path])
+    const filePath = typeof document?.file_path === 'string' ? document.file_path : null
+    if (filePath) {
+      const { error: storageError } = await supabase.storage
+        .from('documents')
+        .remove([filePath])
 
-    if (storageError) {
-      logger.error('Documents API: storage deletion error', storageError)
+      if (storageError) {
+        logger.error('Documents API: storage deletion error', storageError)
+      }
+    } else {
+      logger.warn('Documents API: document missing file_path during deletion', { documentId: id })
     }
 
     // Delete from Pinecone first (before database, in case we need to rollback)
@@ -123,7 +128,7 @@ export async function DELETE(
       action: 'delete',
       resourceType: 'document',
       resourceId: id,
-      resourceName: document.filename || 'Unknown',
+      resourceName: typeof document?.filename === 'string' ? document.filename : 'Unknown',
       endpoint: `/api/documents/${id}`,
       method: 'DELETE',
       statusCode: 200

@@ -527,10 +527,12 @@ export function requiresSpecialHandling(analysis: DocumentSizeAnalysis): {
   }
 }
 
-export default {
+const documentSizeStrategies = {
   analyzeDocumentSize,
   getProcessingPriority,
   estimateProcessingTime,
   requiresSpecialHandling,
   DOCUMENT_SIZE_TIERS
 }
+
+export default documentSizeStrategies

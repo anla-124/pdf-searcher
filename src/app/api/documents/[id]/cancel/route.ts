@@ -26,7 +26,7 @@ export async function POST(
       .single()
 
     if (docError || !document) {
-      logger.error('Document not found', docError, { documentId })
+      logger.error('Document not found', docError ?? undefined, { documentId })
       return NextResponse.json(
         { error: 'Document not found' },
         { status: 404 }
@@ -35,10 +35,11 @@ export async function POST(
 
     // 2. Check if document can be cancelled
     const cancellableStatuses = ['uploading', 'queued', 'processing']
-    if (!cancellableStatuses.includes(document.status)) {
+    const documentStatus = typeof document.status === 'string' ? document.status : null
+    if (!documentStatus || !cancellableStatuses.includes(documentStatus)) {
       logger.warn('Document cannot be cancelled', {
         documentId,
-        currentStatus: document.status
+        currentStatus: documentStatus
       })
       return NextResponse.json(
         {

@@ -45,15 +45,18 @@ export async function GET(
     }
 
     // Map document status to processing phases
-    const phase = getProcessingPhase(document.status, statusData?.message || '')
-    const progress = getPhaseProgress(document.status, statusData?.progress || 0)
+    const documentStatus = typeof document.status === 'string' ? document.status : 'unknown'
+    const statusMessage = typeof statusData?.message === 'string' ? statusData.message : ''
+    const statusProgress = typeof statusData?.progress === 'number' ? statusData.progress : 0
+    const phase = getProcessingPhase(documentStatus, statusMessage)
+    const progress = getPhaseProgress(documentStatus, statusProgress)
 
     const response = {
       documentId: id,
-      status: document.status,
+      status: documentStatus,
       phase,
       progress,
-      message: statusData?.message || getDefaultMessage(document.status),
+      message: statusMessage || getDefaultMessage(documentStatus),
       error: statusData?.error || null,
       lastUpdated: statusData?.created_at || new Date().toISOString()
     }

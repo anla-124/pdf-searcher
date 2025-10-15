@@ -21,7 +21,7 @@ export async function GET(
       .select('file_path, filename, content_type')
       .eq('id', id)
       .eq('user_id', user.id)
-      .single()
+      .single<{ file_path: string | null; filename: string | null; content_type: string | null }>()
 
     if (fetchError) {
       if (fetchError.code === 'PGRST116') {
@@ -31,9 +31,14 @@ export async function GET(
     }
 
     // Download file from Supabase storage
+    const filePath = typeof document.file_path === 'string' ? document.file_path : null
+    if (!filePath) {
+      return NextResponse.json({ error: 'Document file path is missing' }, { status: 500 })
+    }
+
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('documents')
-      .download(document.file_path)
+      .download(filePath)
 
     if (downloadError || !fileData) {
       console.error('Storage download error:', downloadError)
@@ -41,10 +46,13 @@ export async function GET(
     }
 
     // Return the file as a blob
+    const contentType = typeof document.content_type === 'string' ? document.content_type : 'application/pdf'
+    const filename = typeof document.filename === 'string' ? document.filename : `${id}.pdf`
+
     return new NextResponse(fileData, {
       headers: {
-        'Content-Type': document.content_type || 'application/pdf',
-        'Content-Disposition': `attachment; filename="${document.filename}"`,
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${filename}"`,
         'Content-Length': fileData.size.toString(),
       },
     })

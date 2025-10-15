@@ -39,10 +39,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse metadata if provided
-    let metadata = {}
+    let metadata: Record<string, unknown> = {}
     if (metadataString) {
       try {
-        metadata = JSON.parse(metadataString)
+        const parsed = JSON.parse(metadataString)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          metadata = parsed as Record<string, unknown>
+        } else {
+          throw new Error('Metadata must be an object')
+        }
       } catch (error) {
         console.error('Invalid metadata format:', error)
         return NextResponse.json(
@@ -102,31 +107,43 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (!document || typeof document.id !== 'string') {
+      console.error('Invalid document record returned from insert', { document })
+      await supabase.storage.from('documents').remove([uploadData.path])
+      return NextResponse.json({ error: 'Failed to create document record' }, { status: 500 })
+    }
+
     console.warn(`✅ Document record created: ${document.id}`)
+
+    const documentId = document.id
+    const documentFilename = typeof document.filename === 'string' ? document.filename : file.name
+    const documentFilePath = typeof document.file_path === 'string' ? document.file_path : uploadData.path
+    const documentFileSize = typeof document.file_size === 'number' ? document.file_size : file.size
+    const documentContentType = typeof document.content_type === 'string' ? document.content_type : (file.type || 'application/pdf')
 
     // Queue processing job and start background execution
     const { jobId, sizeAnalysis } = await queueDocumentProcessingJob({
-      documentId: document.id,
+      documentId,
       userId: user.id,
-      filename: file.name,
-      fileSize: file.size,
-      filePath: uploadData.path,
-      contentType: file.type || 'application/pdf',
+      filename: documentFilename,
+      fileSize: documentFileSize,
+      filePath: documentFilePath,
+      contentType: documentContentType,
       metadata
     })
 
     if (!jobId) {
       processUploadedDocument({
-        documentId: document.id,
+        documentId,
         userId: user.id,
-        filename: file.name,
-        fileSize: file.size,
-        filePath: uploadData.path,
-        contentType: file.type || 'application/pdf',
+        filename: documentFilename,
+        fileSize: documentFileSize,
+        filePath: documentFilePath,
+        contentType: documentContentType,
         metadata,
         sizeAnalysis
       }).catch(error => {
-        console.error(`Background processing failed for ${document.id}:`, error)
+        console.error(`Background processing failed for ${documentId}:`, error)
       })
     }
 
@@ -137,7 +154,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ 
-      id: document.id,
+      id: documentId,
       jobId,
       message: isQueued
         ? 'Document uploaded successfully and queued for processing'

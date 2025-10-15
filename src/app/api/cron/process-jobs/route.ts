@@ -4,6 +4,7 @@ import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server
 import { processDocument } from '@/lib/document-processing'
 import { batchProcessor } from '@/lib/document-ai-batch'
 import { logger, withRequestContext, generateCorrelationId } from '@/lib/logger'
+import type { GenericSupabaseSchema } from '@/types/supabase'
 
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
 
@@ -33,7 +34,7 @@ interface DocumentJobRecord {
   result_summary?: Record<string, unknown> | null
 }
 
-type ServiceSupabase = SupabaseClient<any>
+type ServiceSupabase = SupabaseClient<GenericSupabaseSchema>
 
 interface QueueStatRecord {
   status: JobStatus
@@ -165,18 +166,20 @@ async function processJob(
             documentId: job.document_id
           })
           const workingDocument: DocumentJobJoin = {
-            id: directDocument.id,
-            title: directDocument.title,
-            filename: directDocument.title, // Use title as fallback
-            file_path: directDocument.file_path,
-            file_size: directDocument.file_size,
-            user_id: directDocument.user_id
+            id: typeof directDocument.id === 'string' ? directDocument.id : job.document_id,
+            title: typeof directDocument.title === 'string' ? directDocument.title : null,
+            filename: typeof directDocument.filename === 'string'
+              ? directDocument.filename
+              : (typeof directDocument.title === 'string' ? directDocument.title : job.document_id),
+            file_path: typeof directDocument.file_path === 'string' ? directDocument.file_path : job.document_id,
+            file_size: typeof directDocument.file_size === 'number' ? directDocument.file_size : 0,
+            user_id: typeof directDocument.user_id === 'string' ? directDocument.user_id : job.user_id
           }
           
           // Continue processing with the directly fetched document
           logger.info('Continuing with direct document lookup workaround', {
             jobId: job.id,
-            documentId: directDocument.id,
+            documentId: typeof directDocument.id === 'string' ? directDocument.id : job.document_id,
             component: 'cron-job'
           })
           

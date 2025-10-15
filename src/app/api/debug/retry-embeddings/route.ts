@@ -21,8 +21,10 @@ export async function POST(_request: NextRequest) {
 
     // Filter documents that have embeddings_skipped = true or no embeddings
     const documentsToFix = documentsWithoutEmbeddings?.filter(doc => {
-      const metadata = doc.metadata || {}
-      return metadata.embeddings_skipped === true || metadata.embeddings_error
+      const metadata = (doc.metadata ?? {}) as Record<string, unknown>
+      const embeddingsSkipped = metadata['embeddings_skipped'] === true
+      const embeddingsError = typeof metadata['embeddings_error'] === 'string'
+      return embeddingsSkipped || embeddingsError
     }) || []
 
     if (documentsToFix.length === 0) {
@@ -37,40 +39,46 @@ export async function POST(_request: NextRequest) {
     const results = []
     
     for (const doc of documentsToFix) {
+      const documentId = typeof doc.id === 'string' ? doc.id : null
+      const extractedText = typeof doc.extracted_text === 'string' ? doc.extracted_text : ''
+      if (!documentId || extractedText.length === 0) {
+        continue
+      }
+
       try {
-        console.warn(`🔄 Generating embeddings for document: ${doc.title}`)
-        
+        console.warn(`🔄 Generating embeddings for document: ${doc.title ?? documentId}`)
+
         // Generate embeddings using the legacy function (simpler, no page tracking needed)
-        await generateAndIndexEmbeddings(doc.id, doc.extracted_text)
+        await generateAndIndexEmbeddings(documentId, extractedText)
 
         // Compute and store centroid for similarity search
-        const chunks = Math.ceil(doc.extracted_text.length / DEFAULT_CHUNK_STRIDE) // Rough estimate
-        await computeAndStoreCentroid(doc.id, chunks)
+        const chunks = Math.ceil(extractedText.length / DEFAULT_CHUNK_STRIDE) // Rough estimate
+        await computeAndStoreCentroid(documentId, chunks)
 
         // Update document metadata to remove embeddings_skipped flag
-        const updatedMetadata = { ...doc.metadata }
-        delete updatedMetadata.embeddings_skipped
-        delete updatedMetadata.embeddings_error
-        updatedMetadata.embeddings_retry_success = true
-        updatedMetadata.embeddings_retry_timestamp = new Date().toISOString()
-        
+        const updatedMetadata = { ...(doc.metadata as Record<string, unknown> | undefined) }
+        delete (updatedMetadata as Record<string, unknown>)['embeddings_skipped']
+        delete (updatedMetadata as Record<string, unknown>)['embeddings_error']
+        ;(updatedMetadata as Record<string, unknown>)['embeddings_retry_success'] = true
+        ;(updatedMetadata as Record<string, unknown>)['embeddings_retry_timestamp'] = new Date().toISOString()
+
         await supabase
           .from('documents')
           .update({ metadata: updatedMetadata })
-          .eq('id', doc.id)
-        
+          .eq('id', documentId)
+
         results.push({
-          documentId: doc.id,
+          documentId,
           title: doc.title,
           status: 'success'
         })
-        
-        console.warn(`✅ Successfully generated embeddings for: ${doc.title}`)
-        
+
+        console.warn(`✅ Successfully generated embeddings for: ${doc.title ?? documentId}`)
+
       } catch (error) {
-        console.error(`❌ Failed to generate embeddings for ${doc.title}:`, error)
+        console.error(`❌ Failed to generate embeddings for ${doc.title ?? documentId}:`, error)
         results.push({
-          documentId: doc.id,
+          documentId: documentId ?? 'unknown',
           title: doc.title,
           status: 'failed',
           error: error instanceof Error ? error.message : 'Unknown error'

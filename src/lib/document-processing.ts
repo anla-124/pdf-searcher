@@ -1,6 +1,6 @@
 import { DocumentProcessorServiceClient } from '@google-cloud/documentai'
 import { PDFDocument } from 'pdf-lib'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { generateEmbeddings } from '@/lib/embeddings-vertex'
 import { indexDocumentInPinecone, deleteDocumentFromPinecone } from '@/lib/pinecone'
@@ -13,6 +13,7 @@ import { logger, measurePerformance, withRequestContext } from '@/lib/logger'
 import { analyzeDocumentSize, estimateProcessingTime, requiresSpecialHandling, type DocumentSizeAnalysis } from '@/lib/document-size-strategies'
 import { DatabaseDocumentWithContent } from '@/types/external-apis'
 import { DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP } from '@/lib/constants/chunking'
+import type { GenericSupabaseSchema } from '@/types/supabase'
 
 // Processing pipeline fingerprint - increment when major changes are made
 const PROCESSING_PIPELINE_VERSION = '2.3.0' // Updated for refined chunking strategy and similarity improvements
@@ -38,6 +39,7 @@ async function executeWithCircuitBreaker<T>(
 }
 import type {
   DocumentAIDocument,
+  DocumentAIPage,
   DocumentAITextAnchor,
   DocumentAIBoundingBox,
   BusinessMetadata,
@@ -96,6 +98,20 @@ interface SaveProcessedDocumentResult {
     endPage: number
     pageCount: number
   } | null
+}
+
+type DocumentAIKeyValuePair = {
+  key?: {
+    textAnchor?: DocumentAITextAnchor
+    confidence?: number
+  }
+  value?: {
+    textAnchor?: DocumentAITextAnchor
+  }
+}
+
+type DocumentAIPageWithKeyValues = DocumentAIPage & {
+  keyValuePairs?: DocumentAIKeyValuePair[]
 }
 
 /**
@@ -197,18 +213,19 @@ export async function cleanupCancelledDocument(documentId: string): Promise<void
     }
 
     // 7. Delete from storage
-    if (document.file_path) {
+    const storageFilePath = typeof document.file_path === 'string' ? document.file_path : null
+    if (storageFilePath) {
       const { error: storageError } = await supabase.storage
         .from('documents')
-        .remove([document.file_path])
+        .remove([storageFilePath])
 
       if (storageError) {
         logger.error('Failed to delete file from storage during cleanup', storageError, {
           documentId,
-          filePath: document.file_path
+          filePath: storageFilePath
         })
       } else {
-        logger.info('Deleted file from storage', { documentId, filePath: document.file_path })
+        logger.info('Deleted file from storage', { documentId, filePath: storageFilePath })
       }
     }
 
@@ -292,8 +309,10 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
               .eq('id', documentId)
               .single();
 
-            const document: DatabaseDocumentWithContent | null = data;
-            const fetchError: any = error;
+            const fetchError = error as PostgrestError | null;
+            const document = (data && typeof data === 'object' && !(data as { error?: boolean }).error)
+              ? (data as unknown as DatabaseDocumentWithContent)
+              : null
 
         if (fetchError || !document) {
           logger.error('Document not found in database', fetchError || new Error('Document not found'), { documentId })
@@ -449,13 +468,18 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           })
 
         } catch (error: unknown) {
+          const documentAiError = error as { code?: number; details?: string } | null
           // Handle page limit errors by processing document in manageable chunks before falling back to batch
-          if ((error as any)?.code === 3 && (error as any)?.details?.includes('exceed the limit')) {
-            logger.warn('Page limit exceeded, attempting chunked processing fallback', {
-              documentId,
-              errorCode: (error as any).code,
-              errorDetails: (error as any).details
-            })
+          if (
+            documentAiError?.code === 3 &&
+            typeof documentAiError.details === 'string' &&
+            documentAiError.details.includes('exceed the limit')
+          ) {
+        logger.warn('Page limit exceeded, attempting chunked processing fallback', {
+          documentId,
+          errorCode: documentAiError.code !== undefined ? String(documentAiError.code) : undefined,
+          errorDetails: documentAiError.details
+        })
 
             try {
               const chunkedData = await processDocumentInChunks(
@@ -781,8 +805,9 @@ function extractStructuredFields(document: DocumentAIDocument, pageOffset: numbe
         }
       }
 
-      if ((page as any).keyValuePairs) {
-        for (const kvp of (page as any).keyValuePairs) {
+      const pageWithKeyValues = page as DocumentAIPageWithKeyValues
+      if (Array.isArray(pageWithKeyValues.keyValuePairs)) {
+        for (const kvp of pageWithKeyValues.keyValuePairs) {
           const keyText = getTextFromTextAnchor(fullText, kvp.key?.textAnchor)
           const valueText = getTextFromTextAnchor(fullText, kvp.value?.textAnchor)
 
@@ -849,7 +874,15 @@ function getFieldType(entityType: string): 'text' | 'number' | 'date' | 'currenc
 function getPageNumber(pageAnchor: { pageRefs?: Array<{ page?: string | number }> } | undefined): number | null {
   const pageValue = pageAnchor?.pageRefs?.[0]?.page
   if (pageValue !== undefined && pageValue !== null) {
-    return parseInt(pageValue as any) + 1 // Convert to 1-based
+    if (typeof pageValue === 'number') {
+      return pageValue + 1
+    }
+    if (typeof pageValue === 'string') {
+      const parsed = Number.parseInt(pageValue, 10)
+      if (!Number.isNaN(parsed)) {
+        return parsed + 1
+      }
+    }
   }
   return null
 }
@@ -884,14 +917,16 @@ export async function generateAndIndexPagedEmbeddings(
       .from('documents')
       .select('metadata, filename')
       .eq('id', documentId)
-      .single()
+      .single<{ metadata: BusinessMetadata | null; filename: string | null }>()
 
     if (docError) {
       logger.warn('Could not fetch document metadata', { documentId, error: docError?.message, component: 'document-processing' })
     }
 
-    const businessMetadata = docRecord?.metadata || {}
-    const filename = docRecord?.filename || ''
+    const businessMetadata = (docRecord?.metadata && typeof docRecord.metadata === 'object')
+      ? docRecord.metadata as BusinessMetadata
+      : {} as BusinessMetadata
+    const filename = typeof docRecord?.filename === 'string' ? docRecord.filename : `${documentId}.pdf`
     const pagesText = extractTextByPages(document)
 
     return await generateEmbeddingsFromPages(documentId, pagesText, businessMetadata, filename, sizeAnalysis)
@@ -1001,15 +1036,20 @@ async function processChunkWithRetry(documentId: string, pagedChunk: PagedChunk,
   }
 }
 
-function getManualSubscriptionRange(metadata: Record<string, any> | null | undefined): { startPage: number; endPage: number } | null {
+function getManualSubscriptionRange(
+  metadata: Record<string, unknown> | null | undefined
+): { startPage: number; endPage: number } | null {
   if (!metadata) return null
 
-  if (metadata.subscription_agreement_skipped === true) {
+  if (metadata['subscription_agreement_skipped'] === true) {
     return null
   }
 
-  const start = Number(metadata.subscription_agreement_start_page)
-  const end = Number(metadata.subscription_agreement_end_page)
+  const startValue = metadata['subscription_agreement_start_page']
+  const endValue = metadata['subscription_agreement_end_page']
+
+  const start = typeof startValue === 'number' ? startValue : Number(startValue)
+  const end = typeof endValue === 'number' ? endValue : Number(endValue)
 
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null
 
@@ -1073,14 +1113,16 @@ function applyManualExclusions(
 }
 
 async function saveProcessedDocumentData(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<GenericSupabaseSchema>,
   documentId: string,
   processedData: ProcessedDocumentData,
   documentRecord: DatabaseDocumentWithContent,
   sizeAnalysis?: DocumentSizeAnalysis
 ): Promise<SaveProcessedDocumentResult> {
-  const existingMetadata = (documentRecord.metadata || {}) as Record<string, any>
-  const manualRange = getManualSubscriptionRange(existingMetadata)
+  const existingMetadata = {
+    ...(documentRecord.metadata ?? {})
+  } as BusinessMetadata
+  const manualRange = getManualSubscriptionRange(existingMetadata as Record<string, unknown>)
   const { filteredPages, exclusion } = applyManualExclusions(processedData.pagesText, manualRange)
   const pagesForEmbedding = filteredPages.length > 0 ? filteredPages : processedData.pagesText
 
@@ -1098,11 +1140,18 @@ async function saveProcessedDocumentData(
     })
   }
 
-  let metadataUpdate: Record<string, any> | undefined
+  let metadataUpdate: BusinessMetadata | undefined
 
   if (exclusion) {
-    const currentSections = Array.isArray(existingMetadata.excluded_sections)
-      ? existingMetadata.excluded_sections.filter((section: any) => section?.type !== 'subscription_agreement')
+    const currentSectionsSource = existingMetadata.excluded_sections
+    const currentSections = Array.isArray(currentSectionsSource)
+      ? currentSectionsSource.filter((section): section is Record<string, unknown> => {
+          if (!section || typeof section !== 'object') {
+            return false
+          }
+          const sectionType = (section as { type?: unknown }).type
+          return sectionType !== 'subscription_agreement'
+        })
       : []
 
     const subscriptionSection = {
@@ -1127,7 +1176,7 @@ async function saveProcessedDocumentData(
       }
     }
 
-    ;(documentRecord as any).metadata = metadataUpdate
+    documentRecord.metadata = metadataUpdate
   }
 
   const processingMetadata = {
@@ -1143,7 +1192,7 @@ async function saveProcessedDocumentData(
     excluded_sections: metadataUpdate?.excluded_sections
   }
 
-  const documentUpdate: Record<string, any> = {
+  const documentUpdate: Record<string, unknown> = {
     extracted_fields: processingMetadata,
     page_count: processedData.pageCount,
     status: 'processing'
@@ -1174,7 +1223,11 @@ async function saveProcessedDocumentData(
     logger.error('Failed to store extracted text in document_content', contentError, { documentId })
 
     // Foreign key constraint violation means document was deleted (cancelled)
-    if (contentError.message?.includes('foreign key constraint') || (contentError as any).code === '23503') {
+    const isForeignKeyViolation =
+      contentError.message?.includes('foreign key constraint') ||
+      contentError.code === '23503'
+
+    if (isForeignKeyViolation) {
       logger.info('Document was deleted during processing (foreign key violation)', { documentId })
       throw new ProcessingCancelledException(documentId)
     }
@@ -1510,8 +1563,8 @@ async function generateEmbeddingsWithUnlimitedRetries(
   const maxRetryAttempts = timeoutConfig?.maxRetryAttempts || 1000000
   let attempt = 0
 
-  const businessMetadata = (docRecord as any)?.metadata || {}
-  const filename = (docRecord as any)?.filename || ''
+  const businessMetadata = (docRecord.metadata ?? {}) as BusinessMetadata
+  const filename = typeof docRecord.filename === 'string' ? docRecord.filename : `${documentId}.pdf`
 
   logger.info('Starting embedding generation with intelligent sizing', {
     documentId,
@@ -1656,13 +1709,25 @@ export async function computeAndStoreCentroid(
 
     // CRITICAL: Deduplicate by chunk_index (some documents may have duplicates)
     const seen = new Set<number>()
-    const embeddings = allEmbeddings.filter(e => {
-      if (seen.has(e.chunk_index)) {
-        return false
+    const embeddings = allEmbeddings.reduce<Array<{
+      chunk_index: number
+      embedding: string | number[]
+      chunk_text: string | null
+    }>>((acc, record) => {
+      if (typeof record.chunk_index !== 'number') {
+        return acc
       }
-      seen.add(e.chunk_index)
-      return true
-    })
+      if (seen.has(record.chunk_index)) {
+        return acc
+      }
+      seen.add(record.chunk_index)
+      acc.push({
+        chunk_index: record.chunk_index,
+        embedding: record.embedding as string | number[],
+        chunk_text: typeof record.chunk_text === 'string' ? record.chunk_text : null
+      })
+      return acc
+    }, [])
 
     logger.info('Successfully fetched embeddings for centroid computation', {
       documentId,
@@ -1931,10 +1996,14 @@ async function generateEmbeddingsFromPages(
 
     if (failedChunks.length > 0) {
       const failedChunkIndexes = failedChunks.map(c => c.chunkIndex);
-      logger.error(`Failed to process ${failedChunks.length} chunks after ${MAX_CHUNK_RETRIES} attempts. Aborting document processing.`, {
-        documentId: documentId,
-        failedChunkIndexes: failedChunkIndexes
-      } as any);
+      logger.error(
+        `Failed to process ${failedChunks.length} chunks after ${MAX_CHUNK_RETRIES} attempts. Aborting document processing.`,
+        undefined,
+        {
+          documentId,
+          failedChunkIndexes
+        }
+      );
       const error = new Error(`Failed to process ${failedChunks.length} chunks after multiple retries.`) as Error & { documentId?: string };
       error.documentId = documentId;
       throw error;
@@ -1943,8 +2012,11 @@ async function generateEmbeddingsFromPages(
     if (i + batchSize < pagedChunks.length) {
       await new Promise(resolve => setTimeout(resolve, processingConfig.delayBetweenBatches))
 
-      if (sizeAnalysis?.memoryRequirements.garbageCollectionHints && typeof (globalThis as any).gc === 'function') {
-        (globalThis as any).gc()
+      if (sizeAnalysis?.memoryRequirements.garbageCollectionHints) {
+        const globalWithGc = globalThis as typeof globalThis & { gc?: (() => void) | undefined }
+        if (typeof globalWithGc.gc === 'function') {
+          globalWithGc.gc()
+        }
       }
     }
   }

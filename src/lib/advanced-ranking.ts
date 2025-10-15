@@ -1,6 +1,53 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/lib/supabase/server'
+import type { GenericSupabaseSchema } from '@/types/supabase'
 
-interface RankingContext {
+type ServiceSupabaseClient = SupabaseClient<GenericSupabaseSchema>
+
+interface RankableDocumentMetadata extends Record<string, unknown> {
+  law_firm?: string
+  fund_manager?: string
+  jurisdiction?: string
+}
+
+interface RankableDocument extends Record<string, unknown> {
+  id: string
+  created_at?: string | null
+  metadata?: RankableDocumentMetadata
+}
+
+interface RankableResult {
+  document: RankableDocument
+  score?: number
+}
+
+interface DocumentQualityMetrics {
+  fileSize: number
+  pageCount: number
+  textLength: number
+  processingNotes: string | null
+}
+
+interface UserDocumentInteractionRow {
+  document_id: string
+  interaction_score: number | null
+}
+
+interface DocumentQualityRow {
+  id: string
+  file_size: number | null
+  page_count: number | null
+  extracted_text: string | null
+  processing_notes: string | null
+}
+
+interface SearchHistoryRow {
+  query: string
+  clicked_documents: string[] | null
+  created_at: string
+}
+
+export interface RankingContext {
   userId: string
   userPreferences?: {
     preferredLawFirms?: string[]
@@ -38,7 +85,7 @@ interface DocumentScore {
 export class AdvancedRankingEngine {
   
   static async rankResults(
-    results: any[],
+    results: RankableResult[],
     query: string,
     context: RankingContext,
     options: {
@@ -61,7 +108,7 @@ export class AdvancedRankingEngine {
     console.warn(`🎯 Advanced ranking for ${results.length} results`)
     console.warn(`📊 Features: personalization=${enablePersonalization}, business=${enableBusinessContext}, quality=${enableQualityScoring}, diversity=${enableDiversityBoost}`)
 
-    const supabase = createServiceClient()
+    const supabase = await createServiceClient() as ServiceSupabaseClient
     
     // Get user interaction data for personalization
     const userInteractions = enablePersonalization ? 
@@ -76,7 +123,7 @@ export class AdvancedRankingEngine {
 
     for (const result of results) {
       const document = result.document
-      const baseScore = result.score || 0
+      const baseScore = result.score ?? 0
       
       const rankingFactors = {
         relevanceScore: baseScore,
@@ -91,7 +138,9 @@ export class AdvancedRankingEngine {
       explanation.push(`Base relevance: ${Math.round(baseScore * 100)}%`)
 
       // 1. Recency Boost
-      const recencyBoost = this.calculateRecencyBoost(document.created_at)
+      const recencyBoost = typeof document.created_at === 'string'
+        ? this.calculateRecencyBoost(document.created_at)
+        : 0
       rankingFactors.recencyBoost = recencyBoost
       if (recencyBoost > 0.05) {
         explanation.push(`Recent document: +${Math.round(recencyBoost * 100)}%`)
@@ -172,7 +221,10 @@ export class AdvancedRankingEngine {
     return scoredResults
   }
 
-  private static async getUserInteractionData(userId: string, supabase: any): Promise<Record<string, number>> {
+  private static async getUserInteractionData(
+    userId: string,
+    supabase: ServiceSupabaseClient
+  ): Promise<Record<string, number>> {
     try {
       // This would track user interactions like clicks, downloads, time spent
       // For now, returning empty object - would be implemented based on analytics data
@@ -183,10 +235,12 @@ export class AdvancedRankingEngine {
         .limit(100)
 
       const interactionMap: Record<string, number> = {}
-      if (interactions) {
-        interactions.forEach((interaction: any) => {
-          interactionMap[interaction.document_id] = interaction.interaction_score || 0
-        })
+      if (Array.isArray(interactions)) {
+        for (const interaction of interactions as UserDocumentInteractionRow[]) {
+          if (interaction.document_id) {
+            interactionMap[interaction.document_id] = interaction.interaction_score ?? 0
+          }
+        }
       }
 
       return interactionMap
@@ -196,23 +250,27 @@ export class AdvancedRankingEngine {
     }
   }
 
-  private static async getDocumentQualityMetrics(documentIds: string[], supabase: any): Promise<Record<string, any>> {
+  private static async getDocumentQualityMetrics(
+    documentIds: string[],
+    supabase: ServiceSupabaseClient
+  ): Promise<Record<string, DocumentQualityMetrics>> {
     try {
       const { data: documents } = await supabase
         .from('documents')
         .select('id, file_size, page_count, extracted_text, processing_notes')
         .in('id', documentIds)
 
-      const qualityMap: Record<string, any> = {}
-      if (documents) {
-        documents.forEach((doc: any) => {
+      const qualityMap: Record<string, DocumentQualityMetrics> = {}
+      if (Array.isArray(documents)) {
+        for (const doc of documents as DocumentQualityRow[]) {
+          if (!doc.id) continue
           qualityMap[doc.id] = {
-            fileSize: doc.file_size,
-            pageCount: doc.page_count,
-            textLength: doc.extracted_text?.length || 0,
-            processingNotes: doc.processing_notes
+            fileSize: doc.file_size ?? 0,
+            pageCount: doc.page_count ?? 0,
+            textLength: doc.extracted_text?.length ?? 0,
+            processingNotes: doc.processing_notes ?? null
           }
-        })
+        }
       }
 
       return qualityMap
@@ -236,16 +294,18 @@ export class AdvancedRankingEngine {
   }
 
   private static calculateBusinessContextBoost(
-    document: any, 
+    document: RankableDocument, 
     businessContext: NonNullable<RankingContext['businessContext']>,
     query: string
   ): number {
     let boost = 0
+    const metadata = document.metadata ?? {}
     
     // Priority metadata boost
     if (businessContext.priorityMetadata) {
       for (const [field, weight] of Object.entries(businessContext.priorityMetadata)) {
-        if (document.metadata?.[field]) {
+        const metadataValue = metadata[field]
+        if (metadataValue !== undefined && metadataValue !== null && metadataValue !== '') {
           boost += weight * 0.05 // Up to 5% per priority field
         }
       }
@@ -253,7 +313,7 @@ export class AdvancedRankingEngine {
     
     // Focus areas boost
     if (businessContext.focusAreas) {
-      const docMetadataString = JSON.stringify(document.metadata).toLowerCase()
+      const docMetadataString = JSON.stringify(metadata).toLowerCase()
       const queryLower = query.toLowerCase()
       
       for (const focusArea of businessContext.focusAreas) {
@@ -268,25 +328,28 @@ export class AdvancedRankingEngine {
   }
 
   private static calculatePersonalizationBoost(
-    document: any,
+    document: RankableDocument,
     userPreferences: NonNullable<RankingContext['userPreferences']>,
     interactionScore: number
   ): number {
     let boost = 0
+    const metadata = document.metadata ?? {}
     
     // Interaction history boost
     boost += Math.min(interactionScore * 0.1, 0.1) // Up to 10% for frequently accessed docs
     
     // Preferred law firms
-    if (userPreferences.preferredLawFirms && document.metadata?.law_firm) {
-      if (userPreferences.preferredLawFirms.includes(document.metadata.law_firm)) {
+    const lawFirm = typeof metadata.law_firm === 'string' ? metadata.law_firm : null
+    if (userPreferences.preferredLawFirms && lawFirm) {
+      if (userPreferences.preferredLawFirms.includes(lawFirm)) {
         boost += 0.05 // +5% for preferred law firm
       }
     }
     
     // Preferred jurisdictions
-    if (userPreferences.preferredJurisdictions && document.metadata?.jurisdiction) {
-      if (userPreferences.preferredJurisdictions.includes(document.metadata.jurisdiction)) {
+    const jurisdiction = typeof metadata.jurisdiction === 'string' ? metadata.jurisdiction : null
+    if (userPreferences.preferredJurisdictions && jurisdiction) {
+      if (userPreferences.preferredJurisdictions.includes(jurisdiction)) {
         boost += 0.05 // +5% for preferred jurisdiction
       }
     }
@@ -294,7 +357,7 @@ export class AdvancedRankingEngine {
     return Math.min(boost, 0.2) // Cap at 20%
   }
 
-  private static calculateQualityScore(document: any, qualityMetrics?: any): number {
+  private static calculateQualityScore(_document: RankableDocument, qualityMetrics?: DocumentQualityMetrics): number {
     if (!qualityMetrics) return 0
     
     let qualityScore = 0
@@ -326,9 +389,12 @@ export class AdvancedRankingEngine {
     return qualityScore
   }
 
-  private static createMetadataKey(document: any): string {
-    const metadata = document.metadata || {}
-    return `${metadata.law_firm || 'unknown'}:${metadata.fund_manager || 'unknown'}:${metadata.jurisdiction || 'unknown'}`
+  private static createMetadataKey(document: RankableDocument): string {
+    const metadata = document.metadata ?? {}
+    const lawFirm = typeof metadata.law_firm === 'string' ? metadata.law_firm : 'unknown'
+    const fundManager = typeof metadata.fund_manager === 'string' ? metadata.fund_manager : 'unknown'
+    const jurisdiction = typeof metadata.jurisdiction === 'string' ? metadata.jurisdiction : 'unknown'
+    return `${lawFirm}:${fundManager}:${jurisdiction}`
   }
 
   private static calculateMetadataSimilarity(key1: string, key2: string): number {
@@ -348,7 +414,7 @@ export class AdvancedRankingEngine {
   // Get ranking weights based on user behavior patterns
   static async getUserRankingPreferences(userId: string): Promise<RankingContext['userPreferences']> {
     try {
-      const supabase = await createServiceClient()
+      const supabase = await createServiceClient() as ServiceSupabaseClient
       
       // This would analyze user behavior to determine preferences
       // For now, returning some default preferences
@@ -360,16 +426,18 @@ export class AdvancedRankingEngine {
         .limit(50)
 
       const preferences: RankingContext['userPreferences'] = {
-        recentSearches: recentSearches?.map(s => s.query) || [],
+        recentSearches: Array.isArray(recentSearches)
+          ? (recentSearches as SearchHistoryRow[]).map(s => s.query)
+          : [],
         documentInteractions: {}
       }
 
       // Analyze clicked documents to infer preferences
-      if (recentSearches) {
+      if (Array.isArray(recentSearches)) {
         const lawFirmCounts: Record<string, number> = {}
         const jurisdictionCounts: Record<string, number> = {}
         
-        for (const search of recentSearches) {
+        for (const search of recentSearches as SearchHistoryRow[]) {
           if (search.clicked_documents) {
             // Would analyze metadata of clicked documents
             // This is a simplified implementation

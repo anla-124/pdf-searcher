@@ -32,38 +32,54 @@ export interface SimilaritySearchResult {
   metadata?: BusinessMetadata
 }
 
+type PineconeMetadata = Record<string, unknown>
+
+type PineconeVectorRecord = {
+  id: string
+  values: number[]
+  metadata?: PineconeMetadata
+}
+
+type SanitizedMetadata = Record<string, string | number | boolean | string[]>
+
+const sanitizeMetadata = (metadata: Record<string, unknown>): SanitizedMetadata => {
+  const sanitized: SanitizedMetadata = {}
+
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === null || value === undefined) continue
+
+    if (Array.isArray(value)) {
+      const filtered = value
+        .filter(item => item !== null && item !== undefined)
+        .map(item => (typeof item === 'string' ? item : String(item)))
+
+      if (filtered.length > 0) {
+        sanitized[key] = filtered
+      }
+      continue
+    }
+
+    if (typeof value === 'object') {
+      sanitized[key] = JSON.stringify(value)
+      continue
+    }
+
+    sanitized[key] = value as string | number | boolean
+  }
+
+  return sanitized
+}
+
 /**
  * Index a document chunk in Pinecone
  */
 export async function indexDocumentInPinecone(
   id: string,
   vector: number[],
-  metadata: Record<string, any>
+  metadata: Record<string, unknown>
 ): Promise<void> {
   try {
-    const sanitizedMetadata: Record<string, string | number | boolean | string[]> = {}
-
-    for (const [key, value] of Object.entries(metadata)) {
-      if (value === null || value === undefined) continue
-
-      if (Array.isArray(value)) {
-        const filtered = value
-          .filter(item => item !== null && item !== undefined)
-          .map(item => (typeof item === 'string' ? item : String(item)))
-
-        if (filtered.length > 0) {
-          sanitizedMetadata[key] = filtered
-        }
-        continue
-      }
-
-      if (typeof value === 'object') {
-        sanitizedMetadata[key] = JSON.stringify(value)
-        continue
-      }
-
-      sanitizedMetadata[key] = value as string | number | boolean
-    }
+    const sanitizedMetadata = sanitizeMetadata(metadata)
 
     await getPineconeIndex().upsert([{
       id,
@@ -85,7 +101,7 @@ export async function searchSimilarDocuments(
   documentId: string,
   options: {
     topK?: number
-    filter?: Record<string, any>
+    filter?: Record<string, unknown>
     threshold?: number
     userId?: string
     pageRange?: {
@@ -118,16 +134,30 @@ export async function searchSimilarDocuments(
     const queryResponse = await getPineconeIndex().query(queryRequest)
     
     // Filter results by threshold and format
-    const results = queryResponse.matches
+    const filteredMatches = queryResponse.matches
       ?.filter(match => match.score !== undefined && match.score >= threshold)
-      ?.slice(0, topK)
-      ?.map(match => ({
+      ?.slice(0, topK) ?? []
+
+    const results: SimilaritySearchResult[] = []
+
+    for (const match of filteredMatches) {
+      const metadata = match.metadata as Record<string, unknown> | undefined
+      const metadataDocumentId = metadata?.document_id
+      if (typeof metadataDocumentId !== 'string') {
+        continue
+      }
+
+      const metadataRecord = (metadata ?? {}) as Record<string, unknown>
+      const metadataText = metadataRecord.text
+
+      results.push({
         id: match.id,
         score: match.score!,
-        document_id: (match.metadata as any)?.document_id as string,
-        text: (match.metadata as any)?.text as string,
-        metadata: match.metadata as BusinessMetadata
-      })) || []
+        document_id: metadataDocumentId,
+        text: typeof metadataText === 'string' ? metadataText : '',
+        metadata: metadataRecord as BusinessMetadata
+      })
+    }
 
     console.warn(`🔍 Found ${results.length} similar documents for ${documentId}`)
     return results
@@ -145,7 +175,7 @@ export async function vectorSearch(
   queryVector: number[],
   options: {
     topK?: number
-    filter?: Record<string, any>
+    filter?: Record<string, unknown>
     threshold?: number
   } = {}
 ): Promise<SimilaritySearchResult[]> {
@@ -163,15 +193,29 @@ export async function vectorSearch(
     const queryResponse = await getPineconeIndex().query(queryRequest)
     
     // Filter and format results
-    const results = queryResponse.matches
-      ?.filter(match => match.score !== undefined && match.score >= threshold)
-      ?.map(match => ({
+    const filteredMatches = queryResponse.matches
+      ?.filter(match => match.score !== undefined && match.score >= threshold) ?? []
+
+    const results: SimilaritySearchResult[] = []
+
+    for (const match of filteredMatches) {
+      const metadata = match.metadata as Record<string, unknown> | undefined
+      const metadataDocumentId = metadata?.document_id
+      if (typeof metadataDocumentId !== 'string') {
+        continue
+      }
+
+      const metadataRecord = (metadata ?? {}) as Record<string, unknown>
+      const metadataText = metadataRecord.text
+
+      results.push({
         id: match.id,
         score: match.score!,
-        document_id: (match.metadata as any)?.document_id as string,
-        text: (match.metadata as any)?.text as string,
-        metadata: match.metadata as BusinessMetadata
-      })) || []
+        document_id: metadataDocumentId,
+        text: typeof metadataText === 'string' ? metadataText : '',
+        metadata: metadataRecord as BusinessMetadata
+      })
+    }
 
     console.warn(`🔍 Vector search returned ${results.length} results`)
     return results
@@ -238,7 +282,7 @@ export async function deleteDocumentFromPinecone(documentId: string): Promise<vo
  */
 export async function updateDocumentMetadataInPinecone(
   documentId: string,
-  newMetadata: Record<string, any>
+  newMetadata: Record<string, unknown>
 ): Promise<void> {
   try {
     console.warn(`📝 Starting Pinecone metadata update for document ${documentId}`)
@@ -266,12 +310,13 @@ export async function updateDocumentMetadataInPinecone(
     // 2. Fetch the full vectors from Pinecone in batches to avoid URL length limits
     // Pinecone supports up to 1000 vectors per fetch, but we use smaller batches to avoid 414 errors
     const BATCH_SIZE = 50
-    const vectors: any[] = []
+    const vectors: PineconeVectorRecord[] = []
 
     for (let i = 0; i < vectorIds.length; i += BATCH_SIZE) {
       const batch = vectorIds.slice(i, i + BATCH_SIZE)
       const fetchResponse = await getPineconeIndex().fetch(batch)
-      vectors.push(...Object.values(fetchResponse.records))
+      const fetchedRecords = Object.values(fetchResponse.records ?? {}) as PineconeVectorRecord[]
+      vectors.push(...fetchedRecords)
     }
 
     if (vectors.length === 0) {
@@ -281,14 +326,14 @@ export async function updateDocumentMetadataInPinecone(
 
     // 3. Prepare updated vectors for upsert
     const updatedVectors = vectors.map(vector => {
-      const existingMetadata = vector.metadata || {}
+      const existingMetadata = vector.metadata ?? {}
       return {
         id: vector.id,
         values: vector.values,
-        metadata: {
+        metadata: sanitizeMetadata({
           ...existingMetadata,
           ...newMetadata
-        }
+        })
       }
     })
 
@@ -322,7 +367,7 @@ async function getDocumentVector(
     const dummyVector = new Array(768).fill(0)
 
     // Build filter with optional page range
-    const filter: Record<string, any> = {
+    const filter: Record<string, unknown> = {
       document_id: { $eq: documentId }
     }
 

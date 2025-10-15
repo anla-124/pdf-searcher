@@ -74,7 +74,10 @@ export async function POST(
       }, { status: 400 })
     }
 
-    const cleanedMetadata: Record<string, unknown> | null = document.metadata ? { ...document.metadata } : null
+    const cleanedMetadata: Record<string, unknown> | null =
+      document.metadata && typeof document.metadata === 'object'
+        ? { ...document.metadata }
+        : null
     if (cleanedMetadata) {
       delete cleanedMetadata['embeddings_skipped']
       delete cleanedMetadata['embeddings_error']
@@ -137,13 +140,24 @@ export async function POST(
       releaseServiceClient(serviceClient)
     }
 
+    const filename = typeof document.filename === 'string' ? document.filename : `${id}.pdf`
+    const fileSize = typeof document.file_size === 'number' ? document.file_size : 0
+    const filePath = typeof document.file_path === 'string' ? document.file_path : null
+    const contentType = typeof document.content_type === 'string'
+      ? document.content_type
+      : 'application/pdf'
+
+    if (!filePath) {
+      return NextResponse.json({ error: 'Document file path is missing' }, { status: 500 })
+    }
+
     const { jobId, sizeAnalysis } = await queueDocumentProcessingJob({
       documentId: id,
       userId: user.id,
-      filename: document.filename,
-      fileSize: document.file_size,
-      filePath: document.file_path,
-      contentType: document.content_type || 'application/pdf',
+      filename,
+      fileSize,
+      filePath,
+      contentType,
       metadata: cleanedMetadata || {}
     })
 
@@ -153,10 +167,10 @@ export async function POST(
       processUploadedDocument({
         documentId: id,
         userId: user.id,
-        filename: document.filename,
-        fileSize: document.file_size,
-        filePath: document.file_path,
-        contentType: document.content_type || 'application/pdf',
+        filename,
+        fileSize,
+        filePath,
+        contentType,
         metadata: cleanedMetadata || {},
         sizeAnalysis
       }).catch(error => {

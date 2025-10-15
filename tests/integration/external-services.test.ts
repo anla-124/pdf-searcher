@@ -63,16 +63,6 @@ const mockPineconeResponse = {
   ]
 }
 
-const mockVertexAIEmbeddingResponse = {
-  predictions: [
-    {
-      embeddings: {
-        values: Array.from({ length: 768 }, () => Math.random() * 0.1 - 0.05) // Mock 768-dimensional embedding
-      }
-    }
-  ]
-}
-
 // MSW server setup
 const server = setupServer(
   // Supabase API mocks

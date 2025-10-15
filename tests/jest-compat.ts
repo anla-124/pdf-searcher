@@ -5,8 +5,22 @@
 
 import { vi } from 'vitest'
 
-// Create global jest object to support existing jest.mock() calls
-(global as any).jest = {
+type JestCompat = {
+  mock: typeof vi.mock
+  doMock: typeof vi.doMock
+  unmock: typeof vi.unmock
+  doUnmock: typeof vi.doUnmock
+  clearAllMocks: typeof vi.clearAllMocks
+  resetAllMocks: typeof vi.resetAllMocks
+  restoreAllMocks: typeof vi.restoreAllMocks
+  spyOn: typeof vi.spyOn
+  fn: typeof vi.fn
+  mocked: typeof vi.mocked
+  isMockFunction: typeof vi.isMockFunction
+  MockedFunction: typeof vi.fn
+}
+
+const jestCompat: JestCompat = {
   mock: vi.mock,
   doMock: vi.doMock,
   unmock: vi.unmock,
@@ -18,9 +32,10 @@ import { vi } from 'vitest'
   fn: vi.fn,
   mocked: vi.mocked,
   isMockFunction: vi.isMockFunction,
-  // Add jest.MockedFunction type compatibility
-  MockedFunction: vi.fn as any,
+  MockedFunction: vi.fn
 }
+
+;(globalThis as typeof globalThis & { jest?: JestCompat }).jest = jestCompat
 
 // Add missing vi functions that some tests expect
 // @ts-ignore

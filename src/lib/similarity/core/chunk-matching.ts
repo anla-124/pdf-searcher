@@ -3,6 +3,7 @@
  * CRITICAL: Implements proper NMS to ensure clean 1:1 chunk alignment
  */
 
+import { logger } from '@/lib/logger'
 import { ChunkMatch, Chunk } from '../types'
 import { cosineSimilarity } from '../utils/vector-operations'
 import { hasSufficientEvidence } from './adaptive-scoring'
@@ -102,16 +103,19 @@ export async function findBidirectionalMatches(
       )
 
       if (fallbackPairs.length > 0) {
-        console.log(
-          `Fallback matching recovered ${fallbackPairs.length} additional pairs ` +
-          `(unmatchedA=${unmatchedAIds.size}, unmatchedB=${unmatchedBIds.size}, threshold=${fallbackConfig.threshold.toFixed(2)})`
-        )
+        logger.info('Fallback matching recovered additional pairs', {
+          additionalPairs: fallbackPairs.length,
+          unmatchedA: unmatchedAIds.size,
+          unmatchedB: unmatchedBIds.size,
+          threshold: Number(fallbackConfig.threshold.toFixed(2))
+        })
         allMatches = greedySelectPairs([...allMatches, ...fallbackPairs])
       } else {
-        console.log(
-          `Fallback matching found no additional pairs ` +
-          `(unmatchedA=${unmatchedAIds.size}, unmatchedB=${unmatchedBIds.size}, threshold=${fallbackConfig.threshold.toFixed(2)})`
-        )
+        logger.info('Fallback matching found no additional pairs', {
+          unmatchedA: unmatchedAIds.size,
+          unmatchedB: unmatchedBIds.size,
+          threshold: Number(fallbackConfig.threshold.toFixed(2))
+        })
       }
     }
   }
@@ -125,10 +129,10 @@ export async function findBidirectionalMatches(
   )
 
   if (!sufficientEvidence) {
-    console.log(
-      `Insufficient evidence: ${allMatches.length} matches ` +
-      `(need ${Math.max(8, Math.ceil(0.05 * Math.min(chunksA.length, chunksB.length)))})`
-    )
+    logger.warn('Insufficient evidence for similarity match', {
+      matchCount: allMatches.length,
+      requiredMatches: Math.max(8, Math.ceil(0.05 * Math.min(chunksA.length, chunksB.length)))
+    })
     return null
   }
 
@@ -172,7 +176,9 @@ function findBestMatches(
       // Early exit check: If first 40 chunks have no matches, skip rest
       if (i < earlyExitThreshold) {
         if (earlyMatchCount === 0 && i === earlyExitThreshold - 1) {
-          console.log('Early exit: No matches in first 40 chunks')
+          logger.warn('Early exit: no matches found in initial chunk sample', {
+            inspectedChunks: earlyExitThreshold
+          })
           break
         }
       }

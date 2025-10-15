@@ -233,7 +233,7 @@ describe('Unlimited Processing Mode Integration', () => {
       }
 
       // Create processing jobs for each document
-      const jobPromises = documents.map(async (doc, index) => {
+      const jobPromises = documents.map(async (doc, _index) => {
         const { data: job, error } = await testSupabase
           .from('processing_jobs')
           .insert({

@@ -100,14 +100,14 @@ export class SupabaseConnectionPool {
           set(name: string, value: string, options: Record<string, unknown>) {
             try {
               cookieStore.set(name, value, options)
-            } catch (_error) {
+            } catch {
               // Ignore errors in Server Components
             }
           },
           remove(name: string, options: Record<string, unknown>) {
             try {
               cookieStore.set(name, '', { ...options, maxAge: 0 })
-            } catch (_error) {
+            } catch {
               // Ignore errors in Server Components
             }
           },

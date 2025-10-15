@@ -9,7 +9,7 @@ export interface SimpleUploadTask {
   fileSize: number
   filePath: string
   contentType?: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
   jobId?: string
   sizeAnalysis?: DocumentSizeAnalysis
 }
@@ -53,7 +53,7 @@ async function recordProcessingStatus(
 async function updateDocumentStatus(
   documentId: string,
   status: string,
-  additionalFields?: Record<string, any>
+  additionalFields?: Record<string, unknown>
 ): Promise<void> {
   const supabase = await createServiceClient()
   await supabase
@@ -96,7 +96,8 @@ async function markJobProcessing(jobId: string): Promise<number> {
     throw new Error(`Failed to read job attempts for ${jobId}: ${error.message}`)
   }
 
-  const attempts = (data?.attempts ?? 0) + 1
+  const attemptsValue = data && typeof data.attempts === 'number' ? data.attempts : 0
+  const attempts = attemptsValue + 1
   await updateJob(jobId, {
     status: 'processing',
     attempts,
@@ -221,11 +222,12 @@ export async function queueDocumentProcessingJob(task: SimpleUploadTask): Promis
   }
 
   const data = insertResult.data
+  const jobId = data && typeof data.id === 'string' ? data.id : undefined
 
   await updateDocumentStatus(task.documentId, 'queued')
   await recordProcessingStatus(task.documentId, 'queued', 10, 'Document queued for processing')
 
-  return { jobId: data.id, sizeAnalysis }
+  return { jobId, sizeAnalysis }
 }
 
 export async function processUploadedDocument(task: SimpleUploadTask): Promise<void> {

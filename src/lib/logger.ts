@@ -180,7 +180,7 @@ class Logger {
           ...meta
         }
       }
-    } catch (_error) {
+    } catch {
       // Silently handle async context errors
     }
     return meta
@@ -194,9 +194,12 @@ class Logger {
     if (this.pino) {
       try {
         this.pino.debug(enrichedMeta, message)
-      } catch (_error) {
-        // Fallback to console in case of pino issues
-        console.debug('[DEBUG]', message, enrichedMeta)
+      } catch (error) {
+        console.warn('[LOGGER][DEBUG] pino debug failed, falling back to console output', {
+          message,
+          metadata: enrichedMeta,
+          error: error instanceof Error ? error.message : String(error)
+        })
       }
     }
   }
@@ -209,9 +212,12 @@ class Logger {
     if (this.pino) {
       try {
         this.pino.info(enrichedMeta, message)
-      } catch (_error) {
-        // Fallback to console in case of pino issues
-        console.info('[INFO]', message, enrichedMeta)
+      } catch (error) {
+        console.warn('[LOGGER][INFO] pino info failed, falling back to console output', {
+          message,
+          metadata: enrichedMeta,
+          error: error instanceof Error ? error.message : String(error)
+        })
       }
     }
   }
@@ -224,9 +230,12 @@ class Logger {
     if (this.pino) {
       try {
         this.pino.warn(enrichedMeta, message)
-      } catch (_error) {
-        // Fallback to console in case of pino issues
-        console.warn('[WARN]', message, enrichedMeta)
+      } catch (error) {
+        console.warn('[LOGGER][WARN] pino warn failed, falling back to console output', {
+          message,
+          metadata: enrichedMeta,
+          error: error instanceof Error ? error.message : String(error)
+        })
       }
     }
   }
@@ -247,9 +256,12 @@ class Logger {
     if (this.pino) {
       try {
         this.pino.error(enrichedMeta, message)
-      } catch (_error) {
-        // Fallback to console in case of pino issues
-        console.error('[ERROR]', message, enrichedMeta)
+      } catch (error) {
+        console.warn('[LOGGER][ERROR] pino error failed, falling back to console output', {
+          message,
+          metadata: enrichedMeta,
+          error: error instanceof Error ? error.message : String(error)
+        })
       }
     }
   }
@@ -393,7 +405,31 @@ export const measurePerformance = async <T>(
 }
 
 // Express middleware for request correlation
-export const requestCorrelationMiddleware = (req: any, res: any, next: any) => {
+type ExpressLikeRequest = {
+  headers: Record<string, string | string[] | undefined>
+  method?: string
+  path?: string
+  ip?: string
+  user?: { id?: string }
+  session?: { id?: string }
+}
+
+type ExpressResponseEnd = (chunk?: unknown, encoding?: string) => void
+
+type ExpressLikeResponse = {
+  statusCode: number
+  setHeader(name: string, value: string): void
+  get(field: string): string | number | string[] | undefined
+  end: ExpressResponseEnd
+}
+
+type ExpressNextFunction = (err?: unknown) => void
+
+export const requestCorrelationMiddleware = (
+  req: ExpressLikeRequest,
+  res: ExpressLikeResponse,
+  next: ExpressNextFunction
+) => {
   const correlationId = req.headers['x-correlation-id'] as string || generateCorrelationId()
   const requestId = generateRequestId()
   
@@ -420,8 +456,8 @@ export const requestCorrelationMiddleware = (req: any, res: any, next: any) => {
     })
     
     // Log response when finished
-    const originalEnd = res.end
-    res.end = function(chunk: any, encoding: any) {
+    const originalEnd = res.end.bind(res) as ExpressResponseEnd
+    res.end = (chunk?: unknown, encoding?: string) => {
       const duration = Date.now() - context.startTime
       logger.logApiRequest(
         context.method!,
@@ -433,9 +469,9 @@ export const requestCorrelationMiddleware = (req: any, res: any, next: any) => {
           responseSize: res.get('content-length')
         }
       )
-      originalEnd.call(this, chunk, encoding)
+      originalEnd(chunk, encoding)
     }
-    
+
     next()
   })
 }

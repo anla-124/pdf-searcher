@@ -14,6 +14,7 @@ export interface JobStatusUpdate {
   message?: string
   error?: string
   updated_at?: string
+  attempts?: number
 }
 
 /**
@@ -27,10 +28,24 @@ export async function updateJobStatus(
   try {
     const supabase = await createServiceClient()
     
-    const updateData: JobStatusUpdate = {
+    const updateData: Record<string, unknown> = {
       status,
-      updated_at: new Date().toISOString(),
-      ...additionalData
+      updated_at: new Date().toISOString()
+    }
+
+    if (additionalData) {
+      if (typeof additionalData.progress === 'number') {
+        updateData.progress = additionalData.progress
+      }
+      if (typeof additionalData.message === 'string') {
+        updateData.message = additionalData.message
+      }
+      if (typeof additionalData.error === 'string') {
+        updateData.error = additionalData.error
+      }
+      if (typeof additionalData.attempts === 'number') {
+        updateData.attempts = additionalData.attempts
+      }
     }
 
     const { error } = await supabase
@@ -67,7 +82,7 @@ export async function getJobStatus(jobId: string): Promise<JobStatusUpdate | nul
     
     const { data, error } = await supabase
       .from('document_processing_queue')
-      .select('status, progress, message, error, updated_at')
+      .select('status, progress, message, error, updated_at, attempts')
       .eq('id', jobId)
       .single()
 
@@ -78,7 +93,14 @@ export async function getJobStatus(jobId: string): Promise<JobStatusUpdate | nul
       throw new Error(`Failed to get job status: ${error.message}`)
     }
 
-    return data
+    return {
+      status: typeof data.status === 'string' ? data.status as JobStatus : 'queued',
+      progress: typeof data.progress === 'number' ? data.progress : undefined,
+      message: typeof data.message === 'string' ? data.message : undefined,
+      error: typeof data.error === 'string' ? data.error : undefined,
+      updated_at: typeof data.updated_at === 'string' ? data.updated_at : new Date().toISOString(),
+      attempts: typeof data.attempts === 'number' ? data.attempts : undefined
+    }
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
@@ -113,7 +135,7 @@ export async function markJobFailed(
   await updateJobStatus(jobId, 'failed', {
     error,
     message: `Job failed after ${attempts || 1} attempts`,
-    ...(attempts && { attempts })
+    ...(typeof attempts === 'number' ? { attempts } : {})
   })
 }
 
@@ -125,7 +147,7 @@ export async function updateJobProgress(
   progress: number,
   message?: string
 ): Promise<void> {
-  const updateData: any = {
+  const updateData: Partial<JobStatusUpdate> & { progress: number } = {
     progress: Math.max(0, Math.min(100, progress)) // Clamp between 0-100
   }
   if (message) updateData.message = message

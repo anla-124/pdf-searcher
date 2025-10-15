@@ -17,8 +17,10 @@ import {
   Zap
 } from 'lucide-react'
 
+type ProcessingPhaseId = 'upload' | 'extraction' | 'analysis' | 'embeddings' | 'indexing'
+
 interface ProcessingPhase {
-  id: string
+  id: ProcessingPhaseId
   name: string
   description: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
@@ -26,6 +28,25 @@ interface ProcessingPhase {
   progress: number
   duration?: number
   startTime?: number
+}
+
+type DocumentProcessingStatus =
+  | 'uploading'
+  | 'queued'
+  | 'processing'
+  | 'completed'
+  | 'error'
+  | 'failed'
+  | 'pending'
+
+interface ProcessingStatusResponse {
+  documentId: string
+  status: DocumentProcessingStatus
+  phase: ProcessingPhaseId
+  progress: number
+  message?: string
+  error?: string | null
+  lastUpdated: string
 }
 
 interface EnhancedProgressTrackerProps {
@@ -81,7 +102,7 @@ export function EnhancedProgressTracker({ documentId, onComplete }: EnhancedProg
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | null>(null)
   const [startTime] = useState(Date.now())
 
-  const updateProgressFromStatus = useCallback((statusData: any) => {
+  const updateProgressFromStatus = useCallback((statusData: ProcessingStatusResponse) => {
     const { status, progress, phase } = statusData
 
     setPhases(prev => prev.map(p => {
@@ -133,7 +154,7 @@ export function EnhancedProgressTracker({ documentId, onComplete }: EnhancedProg
       try {
         const response = await fetch(`/api/documents/${documentId}/processing-status`)
         if (response.ok) {
-          const data = await response.json()
+          const data: ProcessingStatusResponse = await response.json()
           updateProgressFromStatus(data)
         }
       } catch (error) {

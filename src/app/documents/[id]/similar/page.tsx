@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft, FileText, Sparkles, Target, Building, Users, Briefcase, Globe } from 'lucide-react'
 import { formatUploadDate } from '@/lib/date-utils'
+import type { Document as AppDocument } from '@/types'
 import { 
   LAW_FIRM_OPTIONS, 
   FUND_MANAGER_OPTIONS, 
@@ -42,7 +43,7 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
     .select('*')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single()
+    .single<AppDocument>()
 
   if (error || !document) {
     redirect('/dashboard')

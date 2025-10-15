@@ -34,15 +34,17 @@ export interface SimilarityScores {
   explanation: string       // User-facing explanation
 }
 
+export interface SimilarityDocument {
+  id: string
+  title: string
+  filename: string
+  page_count?: number
+  effective_chunk_count: number
+  [key: string]: unknown
+}
+
 export interface SimilarityResult {
-  document: {
-    id: string
-    title: string
-    filename: string
-    page_count?: number
-    effective_chunk_count: number
-    [key: string]: any
-  }
+  document: SimilarityDocument
   scores: SimilarityScores
   matchedChunks: number
   sections: SectionMatch[]
@@ -78,6 +80,6 @@ export interface Stage1Result {
 export interface SearchOptions {
   topK?: number
   threshold?: number
-  filters?: Record<string, any>
+  filters?: Record<string, unknown>
   parallelWorkers?: number
 }

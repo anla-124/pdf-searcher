@@ -29,6 +29,27 @@ export type ResourceType =
   | 'auth'
   | 'admin'
 
+const ACTIVITY_ACTION_VALUES: ActivityAction[] = [
+  'upload',
+  'delete',
+  'search',
+  'download',
+  'view',
+  'similarity',
+  'batch_delete',
+  'login',
+  'logout',
+  'error'
+]
+
+const isActivityAction = (value: unknown): value is ActivityAction =>
+  typeof value === 'string' && ACTIVITY_ACTION_VALUES.includes(value as ActivityAction)
+
+const RESOURCE_TYPE_VALUES: ResourceType[] = ['document', 'search', 'system', 'auth', 'admin']
+
+const isResourceType = (value: unknown): value is ResourceType =>
+  typeof value === 'string' && RESOURCE_TYPE_VALUES.includes(value as ResourceType)
+
 export interface ActivityLogEntry {
   // User information
   userId?: string
@@ -274,7 +295,28 @@ export class ActivityLogger {
         return []
       }
 
-      return data ?? []
+      const records: ActivityLogRecord[] = Array.isArray(data)
+        ? data.map(entry => ({
+            user_uuid: typeof entry.user_uuid === 'string' ? entry.user_uuid : null,
+            email: typeof entry.email === 'string' ? entry.email : null,
+            ip_address: typeof entry.ip_address === 'string' ? entry.ip_address : null,
+            user_agent: typeof entry.user_agent === 'string' ? entry.user_agent : null,
+            action_type: isActivityAction(entry.action_type) ? entry.action_type : 'view',
+            resource_type: isResourceType(entry.resource_type) ? entry.resource_type : 'system',
+            resource_uuid: typeof entry.resource_uuid === 'string' ? entry.resource_uuid : null,
+            resource_name: typeof entry.resource_name === 'string' ? entry.resource_name : null,
+            metadata: entry.metadata && typeof entry.metadata === 'object' ? entry.metadata as Record<string, unknown> : null,
+            api_endpoint: typeof entry.api_endpoint === 'string' ? entry.api_endpoint : null,
+            http_method: typeof entry.http_method === 'string' ? entry.http_method : null,
+            response_status: typeof entry.response_status === 'number' ? entry.response_status : null,
+            duration_ms: typeof entry.duration_ms === 'number' ? entry.duration_ms : null,
+            logged_at: typeof entry.logged_at === 'string'
+              ? entry.logged_at
+              : new Date().toISOString()
+          }))
+        : []
+
+      return records
 
     } catch (error) {
       logger.error('Error fetching activities', error as Error, {
@@ -304,7 +346,18 @@ export class ActivityLogger {
         return []
       }
 
-      return data ?? []
+      const summary: ActivitySummaryRow[] = Array.isArray(data)
+        ? data.map(entry => ({
+            user_uuid: typeof entry.user_uuid === 'string' ? entry.user_uuid : null,
+            email: typeof entry.email === 'string' ? entry.email : null,
+            action_type: isActivityAction(entry.action_type) ? entry.action_type : 'view',
+            logged_at: typeof entry.logged_at === 'string'
+              ? entry.logged_at
+              : new Date().toISOString()
+          }))
+        : []
+
+      return summary
 
     } catch (error) {
       logger.error('Error fetching user summary', error as Error, {
@@ -333,7 +386,16 @@ export class ActivityLogger {
         return []
       }
 
-      return (data as DailyActivityRow[] | null) ?? []
+      const rows: DailyActivityRow[] = Array.isArray(data)
+        ? data.map(entry => ({
+            action_type: isActivityAction(entry.action_type) ? entry.action_type : 'view',
+            logged_at: typeof entry.logged_at === 'string'
+              ? entry.logged_at
+              : new Date().toISOString()
+          }))
+        : []
+
+      return rows
 
     } catch (error) {
       logger.error('Error fetching daily stats', error as Error, {
@@ -371,7 +433,13 @@ export class ActivityLogger {
         }
       }
 
-      const activities: ActivityStatRow[] = data ?? []
+      const activities: ActivityStatRow[] = Array.isArray(data)
+        ? data.map(entry => ({
+            action_type: isActivityAction(entry.action_type) ? entry.action_type : 'view',
+            user_uuid: typeof entry.user_uuid === 'string' ? entry.user_uuid : null,
+            duration_ms: typeof entry.duration_ms === 'number' ? entry.duration_ms : null
+          }))
+        : []
       const uniqueUsers = new Set(activities.map(a => a.user_uuid)).size
       const uploads = activities.filter(a => a.action_type === 'upload').length
       const deletes = activities.filter(a => a.action_type === 'delete').length

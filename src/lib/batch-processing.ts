@@ -62,6 +62,7 @@ export async function processQueuedDocuments(
       .select('*')
       .eq('status', 'queued')
       .order('created_at', { ascending: true })
+      .returns<QueuedJob[]>()
 
     if (error) {
       throw new Error(`Failed to fetch queued documents: ${error.message}`)
@@ -228,7 +229,7 @@ export async function queueDocumentForProcessing(
     .from('document_processing_queue')
     .insert(jobData)
     .select()
-    .single()
+    .single<QueuedJob>()
 
   if (error) {
     throw new Error(`Failed to queue document: ${error.message}`)
@@ -240,7 +241,14 @@ export async function queueDocumentForProcessing(
     priority 
   })
 
-  return data
+  return {
+    id: data.id,
+    document_id: data.document_id,
+    status: data.status,
+    created_at: data.created_at,
+    attempts: data.attempts,
+    error: data.error
+  }
 }
 
 /**
@@ -258,6 +266,7 @@ export async function getBatchProcessingStats(): Promise<{
   const { data, error } = await supabase
     .from('document_processing_queue')
     .select('status')
+    .returns<Array<Pick<QueuedJob, 'status'>>>()
 
   if (error) {
     throw new Error(`Failed to get batch stats: ${error.message}`)

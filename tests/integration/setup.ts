@@ -8,13 +8,13 @@ import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Test environment variables - use production URL with MSW mocks
-;(process.env as any)['NODE_ENV'] = 'integration'
-;(process.env as any)['NEXT_PUBLIC_SUPABASE_URL'] = process.env['TEST_SUPABASE_URL'] || 'https://bsthehpinjtiiznikbyw.supabase.co'
-;(process.env as any)['NEXT_PUBLIC_SUPABASE_ANON_KEY'] = process.env['TEST_SUPABASE_ANON_KEY'] || 'test-anon-key'
-;(process.env as any)['SUPABASE_SERVICE_ROLE_KEY'] = process.env['TEST_SUPABASE_SERVICE_KEY'] || 'test-service-key'
-;(process.env as any)['UNLIMITED_PROCESSING'] = 'true'
-;(process.env as any)['DB_POOL_MAX_CONNECTIONS'] = '100'
-;(process.env as any)['DB_POOL_CONNECTION_TIMEOUT'] = '0'
+process.env['NODE_ENV'] = 'integration'
+process.env['NEXT_PUBLIC_SUPABASE_URL'] = process.env['TEST_SUPABASE_URL'] || 'https://bsthehpinjtiiznikbyw.supabase.co'
+process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] = process.env['TEST_SUPABASE_ANON_KEY'] || 'test-anon-key'
+process.env['SUPABASE_SERVICE_ROLE_KEY'] = process.env['TEST_SUPABASE_SERVICE_KEY'] || 'test-service-key'
+process.env['UNLIMITED_PROCESSING'] = 'true'
+process.env['DB_POOL_MAX_CONNECTIONS'] = '100'
+process.env['DB_POOL_CONNECTION_TIMEOUT'] = '0'
 
 let testSupabase: SupabaseClient
 
@@ -27,17 +27,17 @@ beforeAll(async () => {
   )
   
   // Verify test database connection
-  const { data, error } = await testSupabase.from('documents').select('count').limit(1)
+  const { error } = await testSupabase.from('documents').select('count').limit(1)
   if (error && !error.message.includes('relation "documents" does not exist')) {
     console.warn('Test database connection issue:', error.message)
   }
-  
-  console.log('Integration test environment initialized')
+
+  console.warn('Integration test environment initialized')
 })
 
 // Cleanup after all tests
 afterAll(async () => {
-  console.log('Integration test cleanup completed')
+  console.warn('Integration test cleanup completed')
 })
 
 // Setup before each integration test
@@ -51,7 +51,7 @@ beforeEach(async () => {
         await testSupabase.from('documents').delete().like('title', 'TEST_%')
         await testSupabase.from('processing_jobs').delete().like('document_id', 'test-%')
       }
-    } catch (error) {
+    } catch {
       // Ignore cleanup errors in integration tests
     }
   }

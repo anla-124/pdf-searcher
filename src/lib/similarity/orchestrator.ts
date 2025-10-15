@@ -10,6 +10,7 @@
  * Total: ~20-55 seconds for complete similarity search
  */
 
+import { logger } from '@/lib/logger'
 import { createServiceClient } from '@/lib/supabase/server'
 import { stage0CandidateRetrieval } from './stages/stage0-candidate-retrieval'
 import { stage1ChunkPrefilter } from './stages/stage1-chunk-prefilter'
@@ -71,12 +72,12 @@ export async function executeSimilaritySearch(
   const totalStartTime = Date.now()
 
   try {
-    console.log(`\n🚀 Starting 3-stage similarity search for document ${sourceDocId}...`)
+    logger.info('Starting similarity search pipeline', { sourceDocId })
 
     // ============================================================
     // STAGE 0: Document-Level Centroid Candidate Retrieval
     // ============================================================
-    console.log('\n📍 STAGE 0: Document centroid filtering...')
+    logger.info('Stage 0: document centroid filtering started', { sourceDocId })
 
     const stage0Result = await stage0CandidateRetrieval(sourceDocId, {
       topK: options.stage0_topK ?? 600,
@@ -84,7 +85,7 @@ export async function executeSimilaritySearch(
     })
 
     if (stage0Result.candidateIds.length === 0) {
-      console.log('⚠️  No candidates found in Stage 0. Returning empty results.')
+      logger.warn('Stage 0 found no candidates; returning empty results', { sourceDocId })
       return {
         results: [],
         timing: {
@@ -111,7 +112,7 @@ export async function executeSimilaritySearch(
     let stage1Result: Stage1Result
 
     if (shouldRunStage1) {
-      console.log('\n📍 STAGE 1: Chunk-level pre-filtering...')
+      logger.info('Stage 1: chunk-level pre-filtering started', { sourceDocId })
 
       // Fetch source document chunks (needed for Stage 1)
       const sourceChunks = await fetchDocumentChunks(sourceDocId)
@@ -134,7 +135,7 @@ export async function executeSimilaritySearch(
       )
 
       if (stage1Result.candidateIds.length === 0) {
-        console.log('⚠️  No candidates passed Stage 1 filtering. Returning empty results.')
+        logger.warn('Stage 1 filtering produced no candidates; returning empty results', { sourceDocId })
         return {
           results: [],
           timing: {
@@ -151,10 +152,10 @@ export async function executeSimilaritySearch(
         }
       }
     } else {
-      console.log(
-        '\n📍 STAGE 1: Skipped — candidate count within Stage 2 capacity. ' +
-        `Passing all ${stage0Result.candidateIds.length} candidates to Stage 2.`
-      )
+      logger.info('Stage 1 skipped: candidate count within stage 2 capacity', {
+        sourceDocId,
+        candidateCount: stage0Result.candidateIds.length
+      })
 
       stage1Result = {
         candidateIds: stage0Result.candidateIds,
@@ -166,7 +167,7 @@ export async function executeSimilaritySearch(
     // ============================================================
     // STAGE 2: Parallel Final Scoring with Section Detection
     // ============================================================
-    console.log('\n📍 STAGE 2: Final adaptive scoring...')
+    logger.info('Stage 2: final adaptive scoring started', { sourceDocId })
 
     // Fetch source document metadata (needed for Stage 2)
     const sourceDoc = await fetchDocumentMetadata(sourceDocId)
@@ -184,14 +185,17 @@ export async function executeSimilaritySearch(
     )
 
     if (options.stage2_parallelWorkers !== undefined) {
-      console.log(
-        `   Stage 2 workers override: using ${stage2Workers} (user-specified)`
-      )
+      logger.info('Stage 2 worker override applied', {
+        sourceDocId,
+        workers: stage2Workers,
+        mode: 'user-specified'
+      })
     } else {
-      console.log(
-        `   Stage 2 workers auto-selected: ${stage2Workers} for ` +
-        `${stage1Result.candidateIds.length} candidates`
-      )
+      logger.info('Stage 2 workers auto-selected', {
+        sourceDocId,
+        workers: stage2Workers,
+        candidateCount: stage1Result.candidateIds.length
+      })
     }
 
     const stage2Results = await stage2FinalScoring(
@@ -214,12 +218,22 @@ export async function executeSimilaritySearch(
     // ============================================================
     const totalTimeMs = Date.now() - totalStartTime
 
-    console.log(
-      `\n✅ 3-stage similarity search completed in ${totalTimeMs}ms:\n` +
-      `   Stage 0: ${stage0Result.timeMs}ms (${stage0Result.candidateIds.length} candidates)\n` +
-      `   Stage 1: ${stage1Result.timeMs}ms (${stage1Result.candidateIds.length} candidates)\n` +
-      `   Stage 2: ${totalTimeMs - stage0Result.timeMs - stage1Result.timeMs}ms (${stage2Results.length} results)\n`
-    )
+    logger.info('Similarity search pipeline completed', {
+      sourceDocId,
+      totalTimeMs: totalTimeMs,
+      stage0: {
+        durationMs: stage0Result.timeMs,
+        candidateCount: stage0Result.candidateIds.length
+      },
+      stage1: {
+        durationMs: stage1Result.timeMs,
+        candidateCount: stage1Result.candidateIds.length
+      },
+      stage2: {
+        durationMs: totalTimeMs - stage0Result.timeMs - stage1Result.timeMs,
+        resultCount: stage2Results.length
+      }
+    })
 
     return {
       results: stage2Results,
@@ -238,7 +252,10 @@ export async function executeSimilaritySearch(
 
   } catch (error) {
     const totalTimeMs = Date.now() - totalStartTime
-    console.error(`❌ Similarity search failed after ${totalTimeMs}ms:`, error)
+    logger.error('Similarity search pipeline failed', error instanceof Error ? error : new Error(String(error)), {
+      sourceDocId,
+      durationMs: totalTimeMs
+    })
     throw error
   }
 }
@@ -270,17 +287,27 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
       .eq('document_id', documentId)
       .order('chunk_index', { ascending: true })
       .range(start, end)
+      .returns<Array<{
+        chunk_index: number | null
+        page_number: number | null
+        embedding: number[] | string
+        chunk_text: string | null
+      }>>()
 
     if (error) {
       if ((error as { code?: string }).code === '57014' && currentPageSize > 25) {
         currentPageSize = Math.max(25, Math.floor(currentPageSize / 2))
-        console.warn(
-          `⏱️  Supabase timeout fetching chunks for ${documentId}. ` +
-          `Retrying with smaller page size (${currentPageSize}).`
-        )
+        logger.warn('Supabase timeout fetching chunks; reducing page size', {
+          documentId,
+          nextPageSize: currentPageSize
+        })
         continue
       }
-      console.error(`Failed to fetch chunks for ${documentId}:`, error)
+      logger.error(
+        'Failed to fetch chunks for document embeddings',
+        error instanceof Error ? error : new Error(String(error)),
+        { documentId }
+      )
       return []
     }
 
@@ -288,7 +315,16 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
       break
     }
 
-    allChunks.push(...data)
+    const sanitized = data
+      .filter(record => typeof record.chunk_index === 'number')
+      .map(record => ({
+        chunk_index: record.chunk_index as number,
+        page_number: typeof record.page_number === 'number' ? record.page_number : null,
+        embedding: record.embedding,
+        chunk_text: record.chunk_text
+      }))
+
+    allChunks.push(...sanitized)
     start += data.length
     currentPageSize = defaultPageSize
 
@@ -312,9 +348,11 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
   })
 
   if (allChunks.length !== uniqueChunks.length) {
-    console.log(
-      `⚠️  Document ${documentId} has duplicate chunks: ${allChunks.length} total, ${uniqueChunks.length} unique`
-    )
+    logger.warn('Found duplicate chunks when fetching document embeddings', {
+      documentId,
+      totalChunks: allChunks.length,
+      uniqueChunks: uniqueChunks.length
+    })
   }
 
   const normalizedChunks: Chunk[] = []
@@ -326,7 +364,7 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
       try {
         embeddingValue = JSON.parse(embeddingValue)
       } catch (parseError) {
-        console.error(
+        logger.error(
           'Failed to parse chunk embedding',
           parseError instanceof Error ? parseError : new Error(String(parseError)),
           { documentId, chunkIndex: chunk.chunk_index }
@@ -336,10 +374,11 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
     }
 
     if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
-      console.error(
-        'Chunk embedding is not an array',
-        { documentId, chunkIndex: chunk.chunk_index, type: typeof embeddingValue }
-      )
+      logger.error('Chunk embedding is not a numeric array', undefined, {
+        documentId,
+        chunkIndex: chunk.chunk_index,
+        type: typeof embeddingValue
+      })
       continue
     }
 
@@ -355,7 +394,7 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
   }
 
   if (normalizedChunks.length === 0) {
-    console.warn('Fetched chunk data but none had valid embeddings', { documentId })
+    logger.warn('Fetched chunk data but none had valid embeddings', { documentId })
     return []
   }
 

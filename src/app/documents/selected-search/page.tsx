@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import type { Document as AppDocument } from '@/types'
 import { DashboardLayout } from '@/components/dashboard/layout'
 import { SelectedSearchInterface } from '@/components/similarity/selected-search-interface'
 import { Button } from '@/components/ui/button'
@@ -39,14 +40,14 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
   }
 
   // Fetch the source document if provided
-  let sourceDocument = null
+  let sourceDocument: AppDocument | null = null
   if (sourceId) {
     const { data: document, error } = await supabase
       .from('documents')
       .select('*')
       .eq('id', sourceId)
       .eq('user_id', user.id)
-      .single()
+      .single<AppDocument>()
 
     if (!error && document?.status === 'completed') {
       sourceDocument = document

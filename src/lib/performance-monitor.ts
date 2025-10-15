@@ -8,25 +8,36 @@ export interface PerformanceMetrics {
   system_health: 'healthy' | 'degraded' | 'unhealthy'
 }
 
+interface RecordedMetric {
+  type: string
+  value: number
+  timestamp: string
+  metadata: Record<string, unknown>
+}
+
 export class PerformanceMonitor {
-  private static metrics: PerformanceMetrics[] = []
+  private static metrics: RecordedMetric[] = []
   private static readonly MAX_METRICS = 100 // Keep last 100 measurements
 
   /**
    * Record a performance measurement (simplified)
    */
-  static async recordMetric(type: string, value: number, metadata?: any) {
+  static async recordMetric(
+    type: string,
+    value: number,
+    metadata: Record<string, unknown> = {}
+  ) {
     try {
       const timestamp = new Date().toISOString()
-      const metric = {
+      const metric: RecordedMetric = {
         type,
         value,
         timestamp,
-        metadata: metadata || {}
+        metadata
       }
 
       // Simple in-memory storage
-      this.metrics.push(metric as any)
+      this.metrics.push(metric)
       
       // Keep only the last MAX_METRICS
       if (this.metrics.length > this.MAX_METRICS) {
@@ -77,7 +88,7 @@ export class PerformanceMonitor {
   /**
    * Get recent metrics
    */
-  static getRecentMetrics(): any[] {
+  static getRecentMetrics(): RecordedMetric[] {
     return this.metrics.slice(-10) // Return last 10 metrics
   }
 }

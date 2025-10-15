@@ -1,4 +1,6 @@
 import { NextRequest } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { GenericSupabaseSchema } from '@/types/supabase'
 
 export interface PaginationParams {
   page: number
@@ -96,7 +98,7 @@ export class PaginationUtils {
     baseUrl: string,
     pagination: PaginationMetadata,
     additionalParams: Record<string, string> = {}
-  ): PaginatedResponse<any>['links'] {
+  ): PaginatedResponse<unknown>['links'] {
     const createUrl = (page: number) => {
       const url = new URL(baseUrl)
       url.searchParams.set('page', page.toString())
@@ -110,7 +112,7 @@ export class PaginationUtils {
       return url.toString()
     }
     
-    const links: PaginatedResponse<any>['links'] = {
+    const links: PaginatedResponse<unknown>['links'] = {
       self: createUrl(pagination.page),
       first: createUrl(1),
       last: createUrl(pagination.totalPages)
@@ -181,8 +183,11 @@ export class DatabasePagination {
   /**
    * Apply pagination to Supabase query
    */
-  static applyPagination<T>(
-    query: any, // Supabase query builder
+  static applyPagination<TQuery extends {
+    order: (column: string, options: { ascending: boolean }) => TQuery
+    range: (from: number, to: number) => TQuery
+  }>(
+    query: TQuery,
     params: PaginationParams
   ) {
     return query
@@ -194,9 +199,9 @@ export class DatabasePagination {
    * Get total count for pagination
    */
   static async getTotalCount(
-    supabase: any,
+    supabase: SupabaseClient<GenericSupabaseSchema>,
     tableName: string,
-    filters?: Record<string, any>
+    filters?: Record<string, unknown>
   ): Promise<number> {
     let query = supabase
       .from(tableName)
@@ -245,8 +250,13 @@ export class CursorPagination {
   /**
    * Apply cursor pagination to Supabase query
    */
-  static applyCursorPagination(
-    query: any,
+  static applyCursorPagination<TQuery extends {
+    order: (column: string, options: { ascending: boolean }) => TQuery
+    gt?: (column: string, value: unknown) => TQuery
+    lt?: (column: string, value: unknown) => TQuery
+    limit: (count: number) => TQuery
+  }>(
+    query: TQuery,
     cursor: string | null,
     limit: number,
     sortBy: string = 'created_at',
@@ -257,7 +267,11 @@ export class CursorPagination {
     if (cursor) {
       // Apply cursor filtering
       const operator = sortOrder === 'asc' ? 'gt' : 'lt'
-      paginatedQuery = paginatedQuery[operator](sortBy, cursor)
+      if (operator === 'gt' && typeof paginatedQuery.gt === 'function') {
+        paginatedQuery = paginatedQuery.gt(sortBy, cursor)
+      } else if (operator === 'lt' && typeof paginatedQuery.lt === 'function') {
+        paginatedQuery = paginatedQuery.lt(sortBy, cursor)
+      }
     }
     
     return paginatedQuery.limit(limit + 1) // +1 to check if there are more results
@@ -266,7 +280,7 @@ export class CursorPagination {
   /**
    * Create cursor pagination response
    */
-  static createCursorResponse<T extends Record<string, any>>(
+  static createCursorResponse<T extends Record<string, unknown>>(
     data: T[],
     limit: number,
     sortBy: string = 'created_at'
@@ -277,7 +291,8 @@ export class CursorPagination {
     let nextCursor: string | null = null
     if (hasMore && results.length > 0) {
       const lastItem = results[results.length - 1]
-      nextCursor = lastItem?.[sortBy] || null
+      const cursorCandidate = lastItem?.[sortBy]
+      nextCursor = typeof cursorCandidate === 'string' ? cursorCandidate : null
     }
     
     return {

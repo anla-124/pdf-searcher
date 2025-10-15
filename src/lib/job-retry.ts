@@ -42,7 +42,7 @@ export async function retryFailedJob(
     }
 
     // Check if we've exceeded max attempts
-    const currentAttempts = (currentStatus as any).attempts || 1
+    const currentAttempts = currentStatus.attempts ?? 1
     if (currentAttempts >= config.maxAttempts) {
       logger.warn('Job has exceeded max retry attempts', {
         jobId,
@@ -134,7 +134,21 @@ export async function getRetryableFailedJobs(
       throw new Error(`Failed to get retryable jobs: ${error.message}`)
     }
 
-    return data || []
+    const jobs = Array.isArray(data)
+      ? data
+          .map(entry => {
+            const id = typeof entry.id === 'string' ? entry.id : null
+            if (!id) return null
+            return {
+              id,
+              attempts: typeof entry.attempts === 'number' ? entry.attempts : 0,
+              error: typeof entry.error === 'string' ? entry.error : ''
+            }
+          })
+          .filter((job): job is { id: string; attempts: number; error: string } => job !== null)
+      : []
+
+    return jobs
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
