@@ -24,12 +24,16 @@ interface DocumentJobRecord {
   user_id: string
   status: JobStatus
   attempts: number
+  max_attempts: number
   processing_method?: ProcessingMethod | null
   batch_operation_id?: string | null
   documents?: DocumentJobJoin[] | DocumentJobJoin | null
+  started_at?: string | null
+  completed_at?: string | null
+  result_summary?: Record<string, unknown> | null
 }
 
-type ServiceSupabase = SupabaseClient<Record<string, unknown>>
+type ServiceSupabase = SupabaseClient<any>
 
 interface QueueStatRecord {
   status: JobStatus
@@ -659,8 +663,13 @@ export async function GET(request: NextRequest) {
     
     const processingStartTime = Date.now()
     
+    if (!supabase) {
+      throw new Error('Supabase client not initialized')
+    }
+    const client: ServiceSupabase = supabase
+
     // Process jobs concurrently with Promise.allSettled to avoid failing all on one error
-    const jobPromises = jobs.map((job) => processJob(supabase, job))
+    const jobPromises = jobs.map((job) => processJob(client, job))
     const results = await Promise.allSettled(jobPromises)
     
     // Analyze results with enhanced metrics
@@ -701,12 +710,15 @@ export async function GET(request: NextRequest) {
         throughputJobsPerSec: parseFloat(throughput.toFixed(2)),
         capacityUtilization: unlimitedMode ? 'unlimited' : `${jobs.length}/${maxConcurrentDocs} (${Math.round(jobs.length/maxConcurrentDocs*100)}%)`,
         systemStatus: unlimitedMode ? 'unlimited-processing' : 'enterprise-ready',
-        details: results.map((result, index) => ({
-          jobId: jobs[index].id,
-          documentId: jobs[index].document_id,
-          status: result.status,
-          error: result.status === 'rejected' ? result.reason : null
-        }))
+        details: results.map((result, index) => {
+          const jobInfo = jobs[index]!
+          return {
+            jobId: jobInfo.id,
+            documentId: jobInfo.document_id,
+            status: result.status,
+            error: result.status === 'rejected' ? result.reason : null
+          }
+        })
       }
     })
 

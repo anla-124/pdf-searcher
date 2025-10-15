@@ -379,8 +379,8 @@ export class ActivityLogger {
       const downloads = activities.filter(a => a.action_type === 'download').length
       
       const durations = activities
-        .filter(a => a.duration_ms)
         .map(a => a.duration_ms)
+        .filter((duration): duration is number => duration !== null && duration !== undefined)
       const avgDurationMs = durations.length > 0 
         ? durations.reduce((a, b) => a + b, 0) / durations.length 
         : 0

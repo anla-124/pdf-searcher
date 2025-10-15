@@ -156,7 +156,7 @@ function findBestMatches(
   const earlyExitThreshold = Math.min(40, sourceChunks.length)
 
   for (let i = 0; i < sourceChunks.length; i++) {
-    const chunkA = sourceChunks[i]
+    const chunkA = sourceChunks[i]!
 
     // Find all candidates above threshold
     const candidates: Array<{ chunkB: Chunk; score: number }> = []

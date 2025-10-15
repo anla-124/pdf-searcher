@@ -80,6 +80,11 @@ interface DocumentStatus {
   isStale?: boolean
 }
 
+type MetadataOption = {
+  value: string
+  label: string
+}
+
 interface SearchModeState {
   document: Document | null
   isOpen: boolean
@@ -210,7 +215,10 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
   // Fallback: infer user ID from documents if not already set
   useEffect(() => {
     if (!realtimeUserId && documents.length > 0) {
-      setRealtimeUserId(documents[0].user_id)
+      const firstDocument = documents[0]
+      if (firstDocument) {
+        setRealtimeUserId(firstDocument.user_id)
+      }
     }
   }, [documents, realtimeUserId])
 
@@ -1787,7 +1795,10 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
 }
 
 export default EnhancedDocumentList
-const resolveOptionLabel = (value: string | null | undefined, options: { value: string; label: string }[]): string => {
+const resolveOptionLabel = (
+  value: string | null | undefined,
+  options: ReadonlyArray<MetadataOption>
+): string => {
   if (!value) {
     return ''
   }

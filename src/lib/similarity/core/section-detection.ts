@@ -36,11 +36,15 @@ export function groupMatchesIntoSections(
   } | null = null
 
   for (let i = 0; i < sorted.length; i++) {
-    const match = sorted[i]
+    const match = sorted[i]!
 
-    // Check if this match is contiguous with current section
-    const isContiguous = currentSection &&
-      match.chunkA.pageNumber - currentSection.pagesA[currentSection.pagesA.length - 1] <= maxPageGap
+    let isContiguous = false
+    if (currentSection) {
+      const lastPageA = currentSection.pagesA[currentSection.pagesA.length - 1]
+      if (typeof lastPageA === 'number') {
+        isContiguous = match.chunkA.pageNumber - lastPageA <= maxPageGap
+      }
+    }
 
     if (!currentSection || !isContiguous) {
       // Save previous section
@@ -188,13 +192,24 @@ export function getSectionCoverage(
  * Parse page range string like "5" or "12-20" into min/max
  */
 function parsePageRange(rangeStr: string): { min: number; max: number } {
-  if (rangeStr.includes('-')) {
-    const [min, max] = rangeStr.split('-').map(s => parseInt(s.trim(), 10))
-    return { min, max }
-  } else {
-    const page = parseInt(rangeStr.trim(), 10)
-    return { min: page, max: page }
+  const trimmed = rangeStr.trim()
+
+  if (trimmed.includes('-')) {
+    const [minPartRaw, maxPartRaw] = trimmed.split('-', 2)
+    const minSource = (minPartRaw ?? trimmed).trim()
+    const maxSource = (maxPartRaw ?? minSource).trim()
+    const min = Number.parseInt(minSource, 10)
+    const max = Number.parseInt(maxSource, 10)
+
+    return {
+      min: Number.isNaN(min) ? 0 : min,
+      max: Number.isNaN(max) ? (Number.isNaN(min) ? 0 : min) : max
+    }
   }
+
+  const page = Number.parseInt(trimmed, 10)
+  const normalizedPage = Number.isNaN(page) ? 0 : page
+  return { min: normalizedPage, max: normalizedPage }
 }
 
 /**

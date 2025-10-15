@@ -20,7 +20,7 @@ interface PageProps {
 
 type MetadataOption = { value: string; label: string }
 
-const resolveOptionLabel = (value: unknown, options: MetadataOption[]): string => {
+const resolveOptionLabel = (value: unknown, options: ReadonlyArray<MetadataOption>): string => {
   if (typeof value !== 'string' || value.length === 0) {
     return value ? String(value) : ''
   }

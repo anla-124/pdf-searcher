@@ -20,8 +20,11 @@ import { groupMatchesIntoSections } from '../core/section-detection'
  * @param options - Configuration options
  * @returns Similarity results sorted by final score
  */
-interface Stage2DocumentRecord {
+type Stage2DocumentRecord = {
   id: string
+  title?: string | null
+  filename?: string | null
+  page_count?: number | null
   effective_chunk_count: number | null
   [key: string]: unknown
 }
@@ -208,7 +211,9 @@ async function processCandidate(
     return null
   }
 
-  if (!candidateMetadata.effective_chunk_count) {
+  const effectiveChunkCount = candidateMetadata.effective_chunk_count
+
+  if (effectiveChunkCount == null) {
     logger.warn('Stage 2: candidate missing effective chunk count', { candidateId })
     return null
   }
@@ -216,7 +221,7 @@ async function processCandidate(
   logger.info('Stage 2: candidate chunk summary', {
     candidateId,
     chunkCount: candidateChunks.length,
-    effectiveChunkCount: candidateMetadata.effective_chunk_count
+    effectiveChunkCount
   })
 
   // 2. Bidirectional matching with NMS and minimum evidence filter
@@ -257,8 +262,25 @@ async function processCandidate(
   const sections = groupMatchesIntoSections(matches)
 
   // 5. Build result
+  const normalizedDocument: SimilarityResult['document'] = {
+    ...candidateMetadata,
+    id: candidateMetadata.id,
+    title: typeof candidateMetadata.title === 'string' && candidateMetadata.title.trim().length > 0
+      ? candidateMetadata.title
+      : typeof candidateMetadata.filename === 'string' && candidateMetadata.filename.trim().length > 0
+        ? candidateMetadata.filename
+        : candidateMetadata.id,
+    filename: typeof candidateMetadata.filename === 'string' && candidateMetadata.filename.trim().length > 0
+      ? candidateMetadata.filename
+      : `${candidateId}.pdf`,
+    page_count: typeof candidateMetadata.page_count === 'number'
+      ? candidateMetadata.page_count
+      : undefined,
+    effective_chunk_count: effectiveChunkCount
+  }
+
   const result = {
-    document: candidateMetadata,
+    document: normalizedDocument,
     scores,
     matchedChunks: matches.length,
     sections
@@ -353,30 +375,48 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
     uniqueChunks: uniqueChunks.length
   })
 
-  return uniqueChunks.map(chunk => {
-    // Parse embedding if stored as string in Supabase
-    let embedding = chunk.embedding
-    if (typeof embedding === 'string') {
+  const normalizedChunks: Chunk[] = []
+
+  for (const chunk of uniqueChunks) {
+    let embeddingValue: unknown = chunk.embedding
+
+    if (typeof embeddingValue === 'string') {
       try {
-        embedding = JSON.parse(embedding)
+        embeddingValue = JSON.parse(embeddingValue)
       } catch (parseError) {
         logger.error(
           'Stage 2: failed to parse chunk embedding',
           parseError instanceof Error ? parseError : new Error(String(parseError)),
           { documentId, chunkIndex: chunk.chunk_index }
         )
-        embedding = []
+        continue
       }
     }
 
-    return {
+    if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
+      logger.error(
+        'Stage 2: chunk embedding is not a numeric array',
+        undefined,
+        { documentId, chunkIndex: chunk.chunk_index }
+      )
+      continue
+    }
+
+    normalizedChunks.push({
       id: `${documentId}_chunk_${chunk.chunk_index}`,
       index: chunk.chunk_index,
       pageNumber: chunk.page_number || 1,
-      embedding: embedding,  // Pre-normalized at write time
-      text: chunk.chunk_text
-    }
-  })
+      embedding: embeddingValue as number[],
+      text: chunk.chunk_text ?? undefined
+    })
+  }
+
+  if (normalizedChunks.length === 0) {
+    logger.warn('Stage 2: no valid chunk embeddings after parsing', { documentId })
+    return []
+  }
+
+  return normalizedChunks
 }
 
 /**

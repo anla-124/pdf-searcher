@@ -52,7 +52,10 @@ export function computeHistogram(
   for (const score of scores) {
     const binIndex = Math.min(Math.floor((score - min) / binWidth), binCount - 1)
     if (binIndex >= 0 && binIndex < binCount) {
-      bins[binIndex].count++
+      const bin = bins[binIndex]
+      if (bin) {
+        bin.count++
+      }
     }
   }
 
@@ -81,25 +84,53 @@ export function computeStats(scores: number[]): HistogramStats {
   const mean = sorted.reduce((sum, val) => sum + val, 0) / n
 
   // Median
-  const median = n % 2 === 0
-    ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
-    : sorted[Math.floor(n / 2)]
+  let median: number
+  if (n % 2 === 0) {
+    const upperIndex = n / 2
+    const lowerValue = sorted[upperIndex - 1]
+    const upperValue = sorted[upperIndex]
+    if (lowerValue === undefined || upperValue === undefined) {
+      throw new Error('Cannot compute median: missing sorted values')
+    }
+    median = (lowerValue + upperValue) / 2
+  } else {
+    const midIndex = Math.floor(n / 2)
+    const midValue = sorted[midIndex]
+    if (midValue === undefined) {
+      throw new Error('Cannot compute median: missing sorted value')
+    }
+    median = midValue
+  }
 
   // Standard deviation
   const variance = sorted.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / n
   const stdDev = Math.sqrt(variance)
 
   // Min/max
-  const min = sorted[0]
-  const max = sorted[n - 1]
+  const minValue = sorted[0]
+  const maxValue = sorted[n - 1]
+  if (minValue === undefined || maxValue === undefined) {
+    throw new Error('Cannot compute min/max: missing sorted values')
+  }
 
   // Quartiles
   const q25Index = Math.floor(n * 0.25)
   const q75Index = Math.floor(n * 0.75)
-  const q25 = sorted[q25Index]
-  const q75 = sorted[q75Index]
+  const q25Value = sorted[q25Index]
+  const q75Value = sorted[q75Index]
+  if (q25Value === undefined || q75Value === undefined) {
+    throw new Error('Cannot compute quartiles: missing sorted values')
+  }
 
-  return { mean, median, stdDev, min, max, q25, q75 }
+  return {
+    mean,
+    median,
+    stdDev,
+    min: minValue,
+    max: maxValue,
+    q25: q25Value,
+    q75: q75Value
+  }
 }
 
 /**

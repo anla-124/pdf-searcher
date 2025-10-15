@@ -14,7 +14,7 @@ interface Option {
 }
 
 interface SearchableMultiSelectProps {
-  options: Option[]
+  options: ReadonlyArray<Option>
   values: string[]
   onValuesChange: (values: string[]) => void
   placeholder?: string

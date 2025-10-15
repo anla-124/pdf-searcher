@@ -52,32 +52,49 @@ export async function stage1ChunkPrefilter(
       const batch = sourceChunks.slice(i, i + batchSize)
 
       // Parse embeddings if stored as strings in Supabase
-      const batchVectors = batch.map(c => {
-        let embedding = c.embedding
-        if (typeof embedding === 'string') {
+      const chunkVectorPairs = batch.map(chunk => {
+        let embeddingValue: unknown = chunk.embedding
+
+        if (typeof embeddingValue === 'string') {
           try {
-            embedding = JSON.parse(embedding)
+            embeddingValue = JSON.parse(embeddingValue)
           } catch (parseError) {
             logger.error(
               'Stage 1: failed to parse chunk embedding',
               parseError instanceof Error ? parseError : new Error(String(parseError)),
-              { chunkId: c.id }
+              { chunkId: chunk.id }
             )
             return null
           }
         }
-        return embedding
-      }).filter((v): v is number[] => v !== null && Array.isArray(v))
 
-      if (batchVectors.length === 0) {
+        if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
+          logger.error(
+            'Stage 1: chunk embedding is not a numeric array',
+            undefined,
+            {
+              chunkId: chunk.id,
+              type: typeof embeddingValue
+            }
+          )
+          return null
+        }
+
+        return {
+          chunk,
+          vector: embeddingValue as number[]
+        }
+      }).filter((pair): pair is { chunk: Chunk; vector: number[] } => pair !== null)
+
+      if (chunkVectorPairs.length === 0) {
         logger.warn('Stage 1: batch has no valid embeddings, skipping', { batchStartIndex: i })
         continue
       }
 
       // Query each vector individually (Pinecone doesn't support true batch queries)
-      const batchQueryPromises = batchVectors.map(vector =>
+      const batchQueryPromises = chunkVectorPairs.map(({ vector }) =>
         getPineconeIndex().query({
-          vector: vector,
+          vector,
           topK: neighborsPerChunk,
           includeMetadata: true,
           includeValues: false
@@ -87,8 +104,10 @@ export async function stage1ChunkPrefilter(
       const batchResults = await Promise.all(batchQueryPromises)
 
       // Process results for each query chunk in batch
-      for (let j = 0; j < batch.length; j++) {
-        const queryChunk = batch[j]
+      for (let j = 0; j < chunkVectorPairs.length; j++) {
+        const pair = chunkVectorPairs[j]
+        if (!pair) continue
+        const { chunk: queryChunk } = pair
         const queryResult = batchResults[j]
         const neighbors = queryResult?.matches || []
 
@@ -189,10 +208,16 @@ export function filterByMinimumMatches(
   const filtered: { id: string; count: number }[] = []
 
   for (let i = 0; i < stage1Result.candidateIds.length; i++) {
-    if (stage1Result.matchCounts[i] >= minMatchCount) {
+    const candidateId = stage1Result.candidateIds[i]
+    const matchCount = stage1Result.matchCounts[i]
+    if (candidateId === undefined || matchCount === undefined) {
+      continue
+    }
+
+    if (matchCount >= minMatchCount) {
       filtered.push({
-        id: stage1Result.candidateIds[i],
-        count: stage1Result.matchCounts[i]
+        id: candidateId,
+        count: matchCount
       })
     }
   }

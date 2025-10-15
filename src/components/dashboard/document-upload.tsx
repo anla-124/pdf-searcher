@@ -427,7 +427,7 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
         )}
 
         {validationSummary && validationSummary.totalWarnings > 0 && (
-          <Alert variant="secondary">
+          <Alert>
             <Info className="h-4 w-4" />
             <AlertDescription>
               {validationSummary.totalWarnings} warning{validationSummary.totalWarnings === 1 ? '' : 's'} detected during validation. You can proceed, but review the highlighted fields.

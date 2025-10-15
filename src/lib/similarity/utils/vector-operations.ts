@@ -29,7 +29,19 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
     throw new Error(`Vector dimension mismatch: ${vecA.length} vs ${vecB.length}`)
   }
 
-  return vecA.reduce((sum, a, i) => sum + a * vecB[i], 0)
+  let sum = 0
+  for (let i = 0; i < vecA.length; i++) {
+    const componentA = vecA[i]
+    const componentB = vecB[i]
+    if (componentA === undefined) {
+      throw new Error('Vector dimension mismatch: missing component in vecA')
+    }
+    if (componentB === undefined) {
+      throw new Error('Vector dimension mismatch: missing component in vecB')
+    }
+    sum += componentA * componentB
+  }
+  return sum
 }
 
 /**
@@ -41,7 +53,12 @@ export function computeCentroid(embeddings: number[][]): number[] {
     throw new Error('Cannot compute centroid of empty embedding array')
   }
 
-  const dimension = embeddings[0].length
+  const firstEmbedding = embeddings[0]
+  if (!firstEmbedding) {
+    throw new Error('Cannot compute centroid: missing first embedding')
+  }
+
+  const dimension = firstEmbedding.length
   const centroid = new Array(dimension).fill(0)
 
   // Sum all vectors
@@ -50,7 +67,11 @@ export function computeCentroid(embeddings: number[][]): number[] {
       throw new Error(`Inconsistent embedding dimensions in centroid computation`)
     }
     for (let i = 0; i < dimension; i++) {
-      centroid[i] += embedding[i]
+      const value = embedding[i]
+      if (value === undefined) {
+        throw new Error('Embedding is missing a component during centroid computation')
+      }
+      centroid[i] += value
     }
   }
 

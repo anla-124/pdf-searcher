@@ -317,13 +317,49 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
     )
   }
 
-  return uniqueChunks.map(chunk => ({
-    id: `${documentId}_chunk_${chunk.chunk_index}`,
-    index: chunk.chunk_index,
-    pageNumber: chunk.page_number || 1,
-    embedding: chunk.embedding,  // Pre-normalized at write time
-    text: chunk.chunk_text
-  }))
+  const normalizedChunks: Chunk[] = []
+
+  for (const chunk of uniqueChunks) {
+    let embeddingValue: unknown = chunk.embedding
+
+    if (typeof embeddingValue === 'string') {
+      try {
+        embeddingValue = JSON.parse(embeddingValue)
+      } catch (parseError) {
+        console.error(
+          'Failed to parse chunk embedding',
+          parseError instanceof Error ? parseError : new Error(String(parseError)),
+          { documentId, chunkIndex: chunk.chunk_index }
+        )
+        continue
+      }
+    }
+
+    if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
+      console.error(
+        'Chunk embedding is not an array',
+        { documentId, chunkIndex: chunk.chunk_index, type: typeof embeddingValue }
+      )
+      continue
+    }
+
+    const numericEmbedding = embeddingValue as number[]
+
+    normalizedChunks.push({
+      id: `${documentId}_chunk_${chunk.chunk_index}`,
+      index: chunk.chunk_index,
+      pageNumber: chunk.page_number || 1,
+      embedding: numericEmbedding,
+      text: chunk.chunk_text ?? undefined
+    })
+  }
+
+  if (normalizedChunks.length === 0) {
+    console.warn('Fetched chunk data but none had valid embeddings', { documentId })
+    return []
+  }
+
+  return normalizedChunks
 }
 
 /**
