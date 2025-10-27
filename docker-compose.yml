@@ -1,0 +1,111 @@
+services:
+  pdf-ai-assistant:
+    env_file:
+      - .env.local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+        - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
+        - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
+        - GOOGLE_CLOUD_STORAGE_BUCKET=${GOOGLE_CLOUD_STORAGE_BUCKET}
+        - GOOGLE_CLOUD_PROCESSOR_ID=${GOOGLE_CLOUD_PROCESSOR_ID}
+        - GOOGLE_CLOUD_FORM_PARSER_ID=${GOOGLE_CLOUD_FORM_PARSER_ID}
+        - GOOGLE_CLOUD_OCR_PROCESSOR_ID=${GOOGLE_CLOUD_OCR_PROCESSOR_ID}
+        - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+        - PINECONE_API_KEY=${PINECONE_API_KEY}
+        - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME}
+        - CRON_SECRET=${CRON_SECRET}
+        - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
+        - UPSTASH_REDIS_REST_TOKEN=${UPSTASH_REDIS_REST_TOKEN}
+        - JWT_SECRET=${JWT_SECRET}
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./credentials:/app/credentials:ro
+    networks:
+      - app-network
+    restart: unless-stopped
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis for caching and message queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Message Queue Worker (for async processing)
+  queue-worker:
+    env_file:
+      - .env.local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+        - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
+        - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
+        - GOOGLE_CLOUD_STORAGE_BUCKET=${GOOGLE_CLOUD_STORAGE_BUCKET}
+        - GOOGLE_CLOUD_PROCESSOR_ID=${GOOGLE_CLOUD_PROCESSOR_ID}
+        - GOOGLE_CLOUD_FORM_PARSER_ID=${GOOGLE_CLOUD_FORM_PARSER_ID}
+        - GOOGLE_CLOUD_OCR_PROCESSOR_ID=${GOOGLE_CLOUD_OCR_PROCESSOR_ID}
+        - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+        - PINECONE_API_KEY=${PINECONE_API_KEY}
+        - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME}
+        - CRON_SECRET=${CRON_SECRET}
+        - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
+        - UPSTASH_REDIS_REST_TOKEN=${UPSTASH_REDIS_REST_TOKEN}
+        - JWT_SECRET=${JWT_SECRET}
+    environment:
+      - NODE_ENV=production
+      - WORKER_MODE=true
+      - QUEUE_CONCURRENCY=3
+      - QUEUE_MAX_ATTEMPTS=3
+      - CLEANUP_INTERVAL_MS=3600000
+    volumes:
+      - ./credentials:/app/credentials:ro
+    networks:
+      - app-network
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - pdf-ai-assistant
+    command: ["node", "scripts/queue-worker.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  redis_data:
+
+networks:
+  app-network:
+    driver: bridge

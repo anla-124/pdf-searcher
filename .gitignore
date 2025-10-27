@@ -1,0 +1,95 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables (CRITICAL - Contains API keys)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Catch-all for stray environment configs (keep explicit templates tracked)
+*.env
+*.env.*
+!.env.example
+!.env.local.template
+!.env.docker.example
+
+# Google Cloud credentials (CRITICAL - Contains service account keys)
+credentials/
+credentials/**
+google-service-account.json
+# Other credential formats
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Exclude specific JSON files but allow config files
+package-lock.json
+!package.json
+!tsconfig.json
+!components.json
+!vercel.json
+!.eslintrc.json
+
+# Next.js build output
+.next/
+out/
+
+# Production build
+build/
+dist/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Debug output (Document AI raw responses)
+document-ai-debug/
+
+playwright-report/
+test-results/
