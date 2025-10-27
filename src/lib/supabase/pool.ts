@@ -1,6 +1,5 @@
 import { createServerClient } from '@supabase/ssr'
 import { SupabaseClient } from '@supabase/supabase-js'
-import { cookies } from 'next/headers'
 
 // Pool configuration - UNLIMITED for enterprise processing
 interface PoolConfig {
