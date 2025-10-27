@@ -28,14 +28,10 @@ export interface SectionMatch {
 }
 
 export interface SimilarityScores {
-  jaccard: number           // Primary: "Reusable Content %" (pair-based, token-weighted)
-  weightedBidir: number     // Context: "Match Rate" (token-weighted average)
-  final: number             // Ranking: Coverage of larger document (in tokens)
-  sizeRatio: number         // s = min/max (using total_tokens)
-  alpha: number             // Adaptive weight (clamped to [0.15, 0.95], for diagnostics)
-  coverageA: number         // Coverage: % of doc A matched (matched_tokens_A / total_tokens_A)
-  coverageB: number         // Coverage: % of doc B matched (matched_tokens_B / total_tokens_B)
-  explanation: string       // User-facing explanation
+  sourceScore: number        // Portion of source document matched (directional coverage)
+  targetScore: number        // Portion of target document matched (directional coverage)
+  overlapScore: number       // Token-weighted overlap across both documents
+  explanation: string        // User-facing explanation
 }
 
 export interface SimilarityDocument {

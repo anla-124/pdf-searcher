@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
           updated_at: (targetDoc?.updated_at as string) || new Date().toISOString(),
           metadata: targetDoc?.metadata as Record<string, unknown> | undefined
         },
-        score: result.scores.weightedBidir, // Use the correct property name
+        score: result.scores.sourceScore,
         matching_chunks: result.sections.map(section => ({
           text: `Pages ${section.docB_pageRange} (${section.chunkCount} chunks, avg score: ${(section.avgScore * 100).toFixed(1)}%)`,
           score: section.avgScore

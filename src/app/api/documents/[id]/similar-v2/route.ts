@@ -8,6 +8,85 @@ import { createClient } from '@/lib/supabase/server'
 import { executeSimilaritySearch, validateDocumentForSimilarity } from '@/lib/similarity/orchestrator'
 import { logger } from '@/lib/logger'
 
+type RawFilters = Record<string, unknown>
+
+const PINECONE_OPERATOR_IN = '$in'
+const PINECONE_OPERATOR_EQ = '$eq'
+
+function normalizeFilterEntry(value: unknown): { pinecone: unknown; client: unknown } | null {
+  if (value === null || value === undefined) {
+    return null
+  }
+
+  if (Array.isArray(value)) {
+    const sanitized = value
+      .map(item => {
+        if (typeof item === 'string') {
+          const trimmed = item.trim()
+          return trimmed.length > 0 ? trimmed : null
+        }
+        return item ?? null
+      })
+      .filter((item): item is string | number | boolean => item !== null)
+
+    if (sanitized.length === 0) {
+      return null
+    }
+
+    if (sanitized.length === 1) {
+      return {
+        pinecone: sanitized[0],
+        client: sanitized[0]
+      }
+    }
+
+    return {
+      pinecone: {
+        [PINECONE_OPERATOR_IN]: sanitized
+      },
+      client: sanitized
+    }
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) {
+      return null
+    }
+    return {
+      pinecone: trimmed,
+      client: trimmed
+    }
+  }
+
+  return {
+    pinecone: value,
+    client: value
+  }
+}
+
+function buildStage0Filters(rawFilters: RawFilters, userId: string): {
+  pineconeFilters: Record<string, unknown>
+  appliedFilters: Record<string, unknown>
+} {
+  const pineconeFilters: Record<string, unknown> = {
+    user_id: { [PINECONE_OPERATOR_EQ]: userId }
+  }
+  const appliedFilters: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(rawFilters)) {
+    if (key === 'user_id') continue
+
+    const normalized = normalizeFilterEntry(value)
+    if (!normalized) continue
+
+    pineconeFilters[key] = normalized.pinecone
+    appliedFilters[key] = normalized.client
+  }
+
+  return { pineconeFilters, appliedFilters }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -44,8 +123,16 @@ export async function POST(
       filters?: Record<string, unknown>
     } = body
 
-    // Extract non-metadata fields from filters (not stored in Pinecone)
-    const { page_range: _pageRange, min_score: _minScore, threshold: _threshold, topK: _topK, ...filters } = rawFilters
+    // Extract non-Pinecone filter directives (handled in later stages)
+    const {
+      page_range: requestedPageRange,
+      min_score: requestedMinScore,
+      threshold: requestedThreshold,
+      topK: requestedTopK,
+      ...metadataFilters
+    } = rawFilters as RawFilters
+
+    const { pineconeFilters, appliedFilters } = buildStage0Filters(metadataFilters, user.id)
 
     // Verify document exists and belongs to user
     const { data: document, error: docError } = await supabase
@@ -99,7 +186,7 @@ export async function POST(
     // Execute 3-stage similarity search
     const searchResult = await executeSimilaritySearch(id, {
       stage0_topK,
-      stage0_filters: filters,
+      stage0_filters: pineconeFilters,
       stage1_topK,
       stage1_enabled,
       stage1_neighborsPerChunk,
@@ -139,7 +226,13 @@ export async function POST(
         stage1_neighborsPerChunk,
         stage2_parallelWorkers,
         stage2_fallbackThreshold,
-        filters
+        filters: {
+          ...appliedFilters,
+          ...(requestedPageRange !== undefined ? { page_range: requestedPageRange } : {}),
+          ...(requestedMinScore !== undefined ? { min_score: requestedMinScore } : {}),
+          ...(requestedThreshold !== undefined ? { threshold: requestedThreshold } : {}),
+          ...(requestedTopK !== undefined ? { topK: requestedTopK } : {})
+        }
       },
       version: '2.0.0',
       features: {

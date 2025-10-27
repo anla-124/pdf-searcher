@@ -36,47 +36,24 @@ export function computeAdaptiveScore(
   const uniqueTokens = docA_totalTokens + docB_totalTokens - matchedPairTokens
   const jaccard = uniqueTokens > 0 ? matchedPairTokens / uniqueTokens : 0
 
-  // 2. Coverage from each perspective
-  const coverageA = docA_totalTokens > 0 ? matchedTokensA / docA_totalTokens : 0
-  const coverageB = docB_totalTokens > 0 ? matchedTokensB / docB_totalTokens : 0
+  // 2. Coverage from each perspective (directional scores)
+  const sourceScore = docA_totalTokens > 0 ? matchedTokensA / docA_totalTokens : 0
+  const targetScore = docB_totalTokens > 0 ? matchedTokensB / docB_totalTokens : 0
 
-  // 3. Weighted Bidirectional Similarity (token-weighted average)
-  const weightedBidir =
-    (coverageA * docA_totalTokens + coverageB * docB_totalTokens) /
-    (docA_totalTokens + docB_totalTokens)
+  // 3. Overlap store for convenience (already computed above as jaccard)
+  const overlapScore = jaccard
 
-  // 4. Size Ratio (using total tokens)
-  const sizeRatio =
-    Math.min(docA_totalTokens, docB_totalTokens) /
-    Math.max(docA_totalTokens, docB_totalTokens)
-
-  // 5. Coverage of larger document (primary final score)
-  const largestDocTokens = Math.max(docA_totalTokens, docB_totalTokens)
-  const matchedTokensLarger = docA_totalTokens >= docB_totalTokens ? matchedTokensA : matchedTokensB
-  const final = largestDocTokens > 0 ? matchedTokensLarger / largestDocTokens : 0
-
-  // 6. Adaptive Alpha retained for diagnostics
-  const alphaRaw = sizeRatio * sizeRatio
-  const alpha = Math.max(0.15, Math.min(0.95, alphaRaw))
-
-  // 7. User-Facing Explanation
-  const coveragePercent = final * 100
+  // 4. User-Facing Explanation
   const matchedPairs_count = matchedPairs.length
   const explanation =
-    `Matched ${coveragePercent.toFixed(1)}% of the larger document ` +
-    `(${matchedTokensLarger.toLocaleString()}/${largestDocTokens.toLocaleString()} tokens across ${matchedPairs_count} chunk pairs). ` +
-    `Coverage A→B: ${(coverageA * 100).toFixed(1)}%, B→A: ${(coverageB * 100).toFixed(1)}%. ` +
-    `Jaccard ${(jaccard * 100).toFixed(1)}%, match rate ${(weightedBidir * 100).toFixed(1)}%, ` +
-    `size ratio ${sizeRatio.toFixed(2)} (α=${alpha.toFixed(2)})`
+    `Source reuse ${(sourceScore * 100).toFixed(1)}% (${matchedTokensA.toLocaleString()}/${docA_totalTokens.toLocaleString()} tokens), ` +
+    `target reuse ${(targetScore * 100).toFixed(1)}% (${matchedTokensB.toLocaleString()}/${docB_totalTokens.toLocaleString()} tokens) ` +
+    `across ${matchedPairs_count} chunk pairs. Overlap ${(overlapScore * 100).toFixed(1)}%.`
 
   return {
-    jaccard,
-    weightedBidir,
-    final,
-    sizeRatio,
-    alpha,
-    coverageA,
-    coverageB,
+    sourceScore,
+    targetScore,
+    overlapScore,
     explanation
   }
 }

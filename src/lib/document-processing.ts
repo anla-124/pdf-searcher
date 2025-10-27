@@ -940,9 +940,9 @@ export async function generateAndIndexPagedEmbeddings(
   try {
     const { data: docRecord, error: docError } = await supabase
       .from('documents')
-      .select('metadata, filename')
+      .select('metadata, filename, user_id')
       .eq('id', documentId)
-      .single<{ metadata: BusinessMetadata | null; filename: string | null }>()
+      .single<{ metadata: BusinessMetadata | null; filename: string | null; user_id: string | null }>()
 
     if (docError) {
       logger.warn('Could not fetch document metadata', { documentId, error: docError?.message, component: 'document-processing' })
@@ -952,16 +952,23 @@ export async function generateAndIndexPagedEmbeddings(
       ? docRecord.metadata as BusinessMetadata
       : {} as BusinessMetadata
     const filename = typeof docRecord?.filename === 'string' ? docRecord.filename : `${documentId}.pdf`
+    const userId = typeof docRecord?.user_id === 'string' ? docRecord.user_id : null
     const pagesText = extractTextByPages(document)
 
-    return await generateEmbeddingsFromPages(documentId, pagesText, businessMetadata, filename, sizeAnalysis, document)
+    return await generateEmbeddingsFromPages(documentId, pagesText, businessMetadata, filename, userId, sizeAnalysis, document)
   } finally {
     releaseServiceClient(supabase)
   }
 }
 
 // Extract chunk processing into separate function for better error handling
-async function processChunkWithRetry(documentId: string, pagedChunk: PagedChunk, businessMetadata: BusinessMetadata, filename: string): Promise<void> { // Add filename
+async function processChunkWithRetry(
+  documentId: string,
+  pagedChunk: PagedChunk,
+  businessMetadata: BusinessMetadata,
+  filename: string,
+  userId: string | null
+): Promise<void> {
   try {
     // Generate embedding with Vertex AI using smart retry
     const embeddingResult = await executeWithCircuitBreaker(circuitBreakers.vertexAI, async () => {
@@ -1045,15 +1052,20 @@ async function processChunkWithRetry(documentId: string, pagedChunk: PagedChunk,
       return await SmartRetry.execute(
         async () => {
           logger.debug('Indexing vector in Pinecone', { vectorId, component: 'document-processing' })
-          await indexDocumentInPinecone(vectorId, embedding, {
-            document_id: documentId,
-            chunk_index: pagedChunk.chunkIndex,
-            page_number: pagedChunk.pageNumber,
-            text: pagedChunk.text,
-            filename: filename, // Add filename
-            // Include business metadata for filtering
-            ...businessMetadata
-          })
+          await indexDocumentInPinecone(
+            vectorId,
+            embedding,
+            {
+              document_id: documentId,
+              chunk_index: pagedChunk.chunkIndex,
+              page_number: pagedChunk.pageNumber,
+              text: pagedChunk.text,
+              filename,
+              ...(userId ? { user_id: userId } : {}),
+              // Include business metadata for filtering
+              ...businessMetadata
+            }
+          )
           return true
         },
         RetryConfigs.pineconeIndexing
@@ -1424,7 +1436,7 @@ export async function generateAndIndexEmbeddings(documentId: string, text: strin
     // Get document metadata for Pinecone indexing
     const { data: docRecord, error: docError } = await supabase
       .from('documents')
-      .select('metadata')
+      .select('metadata, user_id')
       .eq('id', documentId)
       .single()
 
@@ -1433,6 +1445,7 @@ export async function generateAndIndexEmbeddings(documentId: string, text: strin
     }
 
     const businessMetadata = docRecord?.metadata || {}
+    const userId = typeof docRecord?.user_id === 'string' ? docRecord.user_id : null
 
     // Split text into chunks for embedding using current defaults
     const chunks = splitTextIntoChunks(text, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP)
@@ -1463,13 +1476,18 @@ export async function generateAndIndexEmbeddings(documentId: string, text: strin
       }
       
       // Index in Pinecone with business metadata
-      await indexDocumentInPinecone(vectorId, embedding, {
-        document_id: documentId,
-        chunk_index: i,
-        text: chunk,
-        // Include business metadata for filtering
-        ...businessMetadata
-      })
+      await indexDocumentInPinecone(
+        vectorId,
+        embedding,
+        {
+          document_id: documentId,
+          chunk_index: i,
+          text: chunk,
+          ...(userId ? { user_id: userId } : {}),
+          // Include business metadata for filtering
+          ...businessMetadata
+        }
+      )
     }
   } finally {
     // FIXED: Ensure connection is properly released back to pool
@@ -1723,6 +1741,7 @@ async function generateEmbeddingsWithUnlimitedRetries(
         pagesText,
         businessMetadata,
         filename,
+        docRecord.user_id ?? null,
         sizeAnalysis,
         document
       )
@@ -2050,6 +2069,7 @@ async function generateEmbeddingsFromPages(
   pagesText: { text: string; pageNumber: number }[],
   businessMetadata: BusinessMetadata,
   filename: string,
+  userId: string | null,
   sizeAnalysis?: DocumentSizeAnalysis,
   document?: DocumentAIDocument | null
 ): Promise<{ chunkCount: number }> {
@@ -2141,7 +2161,7 @@ async function generateEmbeddingsFromPages(
       }
 
       const results = await Promise.allSettled(
-        failedChunks.map(pagedChunk => processChunkWithRetry(documentId, pagedChunk, businessMetadata, filename))
+        failedChunks.map(pagedChunk => processChunkWithRetry(documentId, pagedChunk, businessMetadata, filename, userId))
       );
 
       const newFailedChunks: typeof failedChunks = [];

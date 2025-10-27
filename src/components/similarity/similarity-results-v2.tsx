@@ -17,16 +17,18 @@ import {
   Eye,
   ArrowUp,
   ArrowDown,
-  Layers
+  Building,
+  Users,
+  Briefcase,
+  Globe,
+  GitCompare
 } from 'lucide-react'
 import { formatUploadDate } from '@/lib/date-utils'
 
 interface SimilarityScores {
-  jaccard: number
-  weightedBidir: number
-  sizeRatio: number
-  alpha: number
-  final: number
+  sourceScore: number
+  targetScore: number
+  overlapScore: number
   explanation: string
 }
 
@@ -52,7 +54,7 @@ interface SimilarityResultsV2Props {
 }
 
 export function SimilarityResultsV2({ results, sourceDocument, isLoading }: SimilarityResultsV2Props) {
-  const [sortBy, setSortBy] = useState<string>('final_score')
+  const [sortBy, setSortBy] = useState<string>('source_score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   // selectedResult state removed - was only used by deleted SimilarityDetailsModal
 
@@ -69,24 +71,19 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
     return pageCount === 1 ? '1 page' : `${pageCount} pages`
   }
 
-  const getEffectiveChunkCount = (doc: Document): number | undefined => {
-    const value = (doc as unknown as { effective_chunk_count?: number }).effective_chunk_count
-    return typeof value === 'number' ? value : undefined
-  }
-
   const sortResults = (results: SimilarityResultV2[]) => {
     const sorted = [...results].sort((a, b) => {
       let comparison = 0
 
       switch (sortBy) {
-        case 'final_score':
-          comparison = a.scores.final - b.scores.final
+        case 'target_score':
+          comparison = a.scores.targetScore - b.scores.targetScore
           break
-        case 'overlap':
-          comparison = a.scores.jaccard - b.scores.jaccard
+        case 'source_score':
+          comparison = a.scores.sourceScore - b.scores.sourceScore
           break
-        case 'match_rate':
-          comparison = a.scores.weightedBidir - b.scores.weightedBidir
+        case 'overlap_score':
+          comparison = a.scores.overlapScore - b.scores.overlapScore
           break
         case 'upload_time':
           comparison = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
@@ -98,7 +95,7 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
           comparison = a.document.file_size - b.document.file_size
           break
         default:
-          comparison = a.scores.final - b.scores.final
+          comparison = a.scores.targetScore - b.scores.targetScore
       }
 
       return sortOrder === 'asc' ? comparison : -comparison
@@ -199,9 +196,9 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                         <SelectValue placeholder="Sort by..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="final_score">Coverage (Final)</SelectItem>
-                        <SelectItem value="overlap">Overlap</SelectItem>
-                        <SelectItem value="match_rate">Match Rate</SelectItem>
+                        <SelectItem value="source_score">Source Score</SelectItem>
+                        <SelectItem value="target_score">Target Score</SelectItem>
+                        <SelectItem value="overlap_score">Overlap</SelectItem>
                         <SelectItem value="upload_time">Upload Time</SelectItem>
                         <SelectItem value="name">Name</SelectItem>
                         <SelectItem value="size">Size</SelectItem>
@@ -241,15 +238,6 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
           ) : (
             <div className="space-y-6">
               {sortResults(results).map((result) => {
-                const sourceChunks = getEffectiveChunkCount(sourceDocument)
-                const candidateChunks = getEffectiveChunkCount(result.document)
-                const largestChunkCount = Math.max(
-                  sourceChunks ?? 0,
-                  candidateChunks ?? 0,
-                  result.matchedChunkCount
-                )
-                const coverageDenominatorLabel = largestChunkCount > 0 ? largestChunkCount : '—'
-
                 return (
                 <Card key={result.document.id} className="border-l-4 border-l-blue-500">
                   <CardHeader className="pb-3">
@@ -273,17 +261,12 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                           <div className="flex items-center gap-2 mb-1">
                             <TrendingUp className="h-4 w-4 text-gray-400" />
                             <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                              Coverage Score (Final)
+                              Source Score
                             </span>
                           </div>
-                          <Badge className={`${getScoreBadgeColor(result.scores.final)} text-lg px-3 py-1`}>
-                            {Number((result.scores.final * 100).toFixed(1))}%
+                          <Badge className={`${getScoreBadgeColor(result.scores.sourceScore)} text-lg px-3 py-1`}>
+                            {Number((result.scores.sourceScore * 100).toFixed(1))}%
                           </Badge>
-                          {largestChunkCount > 0 && (
-                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                              Matched {result.matchedChunkCount} of {coverageDenominatorLabel} chunks in the larger document
-                            </p>
-                          )}
                         </div>
 
                         <div className="flex gap-2">
@@ -293,7 +276,7 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                             onClick={() => viewPdf(result.document)}
                           >
                             <Eye className="h-4 w-4 mr-2" />
-                            View PDF
+                            View
                           </Button>
                           <Button
                             variant="outline"
@@ -302,6 +285,14 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                           >
                             <Download className="h-4 w-4 mr-2" />
                             Download
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="opacity-70 cursor-default"
+                          >
+                            <GitCompare className="h-4 w-4 mr-2" />
+                            Compare with Draftable
                           </Button>
                         </div>
                       </div>
@@ -315,49 +306,12 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                         Supporting Metrics:
                       </span>
                       <Badge variant="outline" className="text-xs">
-                        Overlap (Jaccard): {Math.round(result.scores.jaccard * 100)}%
+                        Target Score: {Math.round(result.scores.targetScore * 100)}%
                       </Badge>
                       <Badge variant="outline" className="text-xs">
-                        Match Rate: {Math.round(result.scores.weightedBidir * 100)}%
+                        Overlap: {Math.round(result.scores.overlapScore * 100)}%
                       </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        Size Ratio: {(result.scores.sizeRatio * 100).toFixed(0)}%
-                      </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        Alpha (diag): {result.scores.alpha.toFixed(2)}
-                      </Badge>
-                      {largestChunkCount > 0 && (
-                        <Badge variant="outline" className="text-xs">
-                          Coverage: {result.matchedChunkCount}/{coverageDenominatorLabel} chunks
-                        </Badge>
-                      )}
-
-                      {/* Details button removed - modal functionality deleted during cleanup */}
-                      {/* <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2"
-                      >
-                        <Info className="h-3 w-3 mr-1" />
-                        <span className="text-xs">Details</span>
-                      </Button> */}
                     </div>
-
-                    {/* Section Matches */}
-                    {result.sections.length > 0 && (
-                      <div className="border-t pt-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Layers className="h-4 w-4 text-gray-500" />
-                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Matching Sections ({result.sections.length})
-                          </span>
-                        </div>
-                        {/* SectionMatchesList component removed during cleanup */}
-                        <div className="text-sm text-gray-600 dark:text-gray-400">
-                          {result.sections.length} matching sections found
-                        </div>
-                      </div>
-                    )}
 
                     {/* Document metadata */}
                     <div className="space-y-3 border-t pt-4">
@@ -370,41 +324,41 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                         {formatPageCount(result.document.page_count) && (
                           <span>{formatPageCount(result.document.page_count)}</span>
                         )}
-                        <span className="text-xs">
-                          {result.matchedChunkCount} matched chunks
-                        </span>
                       </div>
 
                       {/* Business metadata */}
                       {(result.document.metadata?.law_firm ||
-                        result.document.metadata?.fund_manager ||
-                        result.document.metadata?.fund_admin ||
-                        result.document.metadata?.jurisdiction) && (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Business Details:</span>
-                          {result.document.metadata?.law_firm && result.document.metadata.law_firm !== 'N/A' && (
-                            <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800">
-                              📋 {result.document.metadata.law_firm}
-                            </Badge>
-                          )}
-                          {result.document.metadata?.fund_manager && result.document.metadata.fund_manager !== 'N/A' && (
-                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800">
-                              💼 {result.document.metadata.fund_manager}
-                            </Badge>
-                          )}
-                          {result.document.metadata?.fund_admin && result.document.metadata.fund_admin !== 'N/A' && (
-                            <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-800">
-                              🏢 {result.document.metadata.fund_admin}
-                            </Badge>
-                          )}
-                          {result.document.metadata?.jurisdiction && result.document.metadata.jurisdiction !== 'N/A' && (
-                            <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800">
-                              🌍 {result.document.metadata.jurisdiction}
-                            </Badge>
-                          )}
-                        </div>
-                      )}
-                    </div>
+  result.document.metadata?.fund_manager ||
+  result.document.metadata?.fund_admin ||
+  result.document.metadata?.jurisdiction) && (
+    <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+      {result.document.metadata?.law_firm && (
+        <div className="flex items-center gap-1">
+          <Building className="h-3 w-3" />
+          {result.document.metadata.law_firm}
+        </div>
+      )}
+      {result.document.metadata?.fund_manager && (
+        <div className="flex items-center gap-1">
+          <Users className="h-3 w-3" />
+          {result.document.metadata.fund_manager}
+        </div>
+      )}
+      {result.document.metadata?.fund_admin && (
+        <div className="flex items-center gap-1">
+          <Briefcase className="h-3 w-3" />
+          {result.document.metadata.fund_admin}
+        </div>
+      )}
+      {result.document.metadata?.jurisdiction && (
+        <div className="flex items-center gap-1">
+          <Globe className="h-3 w-3" />
+          {result.document.metadata.jurisdiction}
+        </div>
+      )}
+    </div>
+  )}
+                                        </div>
                   </CardContent>
                 </Card>
               )

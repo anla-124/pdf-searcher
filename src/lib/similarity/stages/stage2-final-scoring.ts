@@ -102,17 +102,17 @@ export async function stage2FinalScoring(
 
     // 4. Multi-criteria sorting (tie-breaking)
     allResults.sort((a, b) => {
-      // 1. Sort by final score
-      if (Math.abs(a.scores.final - b.scores.final) > 0.01) {
-        return b.scores.final - a.scores.final
+      // 1. Sort by source score (portion of source covered by candidate)
+      if (Math.abs(a.scores.sourceScore - b.scores.sourceScore) > 0.01) {
+        return b.scores.sourceScore - a.scores.sourceScore
       }
-      // 2. Tie-break by Jaccard
-      if (Math.abs(a.scores.jaccard - b.scores.jaccard) > 0.01) {
-        return b.scores.jaccard - a.scores.jaccard
+      // 2. Tie-break by target score (portion of target covered by source)
+      if (Math.abs(a.scores.targetScore - b.scores.targetScore) > 0.01) {
+        return b.scores.targetScore - a.scores.targetScore
       }
-      // 3. Tie-break by weighted bidirectional
-      if (Math.abs(a.scores.weightedBidir - b.scores.weightedBidir) > 0.01) {
-        return b.scores.weightedBidir - a.scores.weightedBidir
+      // 3. Tie-break by overlap score (mutual similarity)
+      if (Math.abs(a.scores.overlapScore - b.scores.overlapScore) > 0.01) {
+        return b.scores.overlapScore - a.scores.overlapScore
       }
       // 4. Final tie-break: More matched chunks
       return b.matchedChunks - a.matchedChunks
@@ -297,11 +297,9 @@ async function processCandidate(
 
   logger.info('Stage 2: candidate scoring complete', {
     candidateId,
-    finalScore: scores.final,
-    coverageA: scores.coverageA,
-    coverageB: scores.coverageB,
-    jaccardScore: scores.jaccard,
-    weightedBidirectionalScore: scores.weightedBidir,
+    sourceScore: scores.sourceScore,
+    targetScore: scores.targetScore,
+    overlapScore: scores.overlapScore,
     matchedChunks: matches.length
   })
 

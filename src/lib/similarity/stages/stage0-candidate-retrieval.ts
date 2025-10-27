@@ -66,7 +66,7 @@ export async function stage0CandidateRetrieval(
     })
 
     // Build Pinecone filter
-    const pineconeFilter = {
+    const pineconeFilter: Record<string, unknown> = {
       ...filters,
       document_id: { $ne: sourceDocId }  // Exclude self
     }
@@ -132,6 +132,33 @@ export async function stage0CandidateRetrieval(
 
     const candidateIds = candidates.map(c => c[0])
     const scores = candidates.map(c => c[1])
+
+    if (candidateIds.length === 0 && 'user_id' in pineconeFilter) {
+      const { user_id: _userFilter, ...fallbackFilter } = pineconeFilter
+
+      try {
+        const fallbackResponse = await getPineconeIndex().query({
+          vector: centroidVector,
+          topK: topK * 2,
+          filter: fallbackFilter as Record<string, unknown>,
+          includeMetadata: true,
+          includeValues: false
+        })
+
+        const fallbackMatches = (fallbackResponse.matches ?? []).length
+        if (fallbackMatches > 0) {
+          logger.warn('Stage 0: user_id filter eliminated all candidates', {
+            sourceDocId,
+            fallbackMatches
+          })
+        }
+      } catch (fallbackError) {
+        logger.warn('Stage 0: fallback query without user filter failed', {
+          sourceDocId,
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        })
+      }
+    }
 
     const timeMs = Date.now() - startTime
 
