@@ -82,43 +82,6 @@ export class SupabaseConnectionPool {
     return SupabaseConnectionPool.instance
   }
 
-  /**
-   * Get a pooled authenticated client for user sessions
-   */
-  async getAuthenticatedClient(_sessionId?: string): Promise<SupabaseClient> {
-    const cookieStore = await cookies()
-    
-    // Create session-aware client
-    const client = createServerClient(
-      process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-      process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY']!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
-          },
-          set(name: string, value: string, options: Record<string, unknown>) {
-            try {
-              cookieStore.set(name, value, options)
-            } catch {
-              // Ignore errors in Server Components
-            }
-          },
-          remove(name: string, options: Record<string, unknown>) {
-            try {
-              cookieStore.set(name, '', { ...options, maxAge: 0 })
-            } catch {
-              // Ignore errors in Server Components
-            }
-          },
-        },
-      }
-    )
-
-    // For now, return the client directly since session-aware clients
-    // need fresh cookie context for each request
-    return client
-  }
 
   /**
    * Get a pooled service client for background operations
@@ -329,7 +292,6 @@ function getConnectionPoolInstance() {
 }
 
 export const connectionPool = {
-  getAuthenticatedClient: async () => getConnectionPoolInstance().getAuthenticatedClient(),
   getServiceClient: async () => getConnectionPoolInstance().getServiceClient(),
   releaseServiceClient: (client: SupabaseClient) => getConnectionPoolInstance().releaseServiceClient(client),
   getMetrics: () => getConnectionPoolInstance().getMetrics(),
