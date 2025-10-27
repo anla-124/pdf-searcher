@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
 
-    logger.info('Documents API: fetching documents for user', { userId: user.id })
+    logger.info('Documents API: fetching documents for user', { userId: user.id, statusParam: status, searchParam: search, includeJobsParam: includeJobs })
 
     // Get total count for pagination (with same filters)
     let countQuery = supabase
