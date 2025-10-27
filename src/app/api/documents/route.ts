@@ -130,6 +130,8 @@ export async function GET(request: NextRequest) {
       return doc
     }) || []
 
+    logger.info('Documents API: returned documents', { userId: user.id, count: flattenedDocuments.length, documentIds: flattenedDocuments.map(doc => doc.id) })
+
     // Create paginated response
     const responseData = PaginationUtils.createPaginatedResponse(
       flattenedDocuments,
