@@ -1,0 +1,14 @@
+name: Process Document Queue
+on:
+  schedule:
+    # Runs every 5 minutes
+    - cron: '*/5 * * * *'
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call cron job endpoint
+        run: |
+          curl --request GET \
+          --url 'https://pdf-searcher-seven.vercel.app' \
+          --header 'Authorization: Bearer ${{ secrets.CRON_SECRET }}'
