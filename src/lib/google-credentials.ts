@@ -19,8 +19,8 @@ export function getGoogleClientOptions() {
           ...baseOptions,
           credentials: JSON.parse(credentials),
         };
-      } catch (e) {
-        throw new Error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS as JSON', { cause: e });
+      } catch {
+        throw new Error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS as JSON');
       }
     } else {
       // Otherwise, we assume it's a file path for local development
@@ -40,8 +40,8 @@ export function getGoogleClientOptions() {
         ...baseOptions,
         credentials: JSON.parse(credentialsJson),
       };
-    } catch (e) {
-      throw new Error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS_BASE64', { cause: e });
+    } catch {
+      throw new Error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS_BASE64');
     }
   }
 
