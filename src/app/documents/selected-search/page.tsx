@@ -22,7 +22,6 @@ import {
   FUND_ADMIN_OPTIONS,
   JURISDICTION_OPTIONS
 } from '@/lib/metadata-constants'
-import { SourceDocumentActions } from '@/components/similarity/source-document-actions'
 
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
@@ -171,7 +170,7 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
                     )}
                   </div>
                 </div>
-                <SourceDocumentActions document={sourceDocument} accent="purple" />
+                
               </div>
             </CardContent>
           </Card>
