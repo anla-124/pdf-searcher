@@ -8,12 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { Document as AppDocument } from '@/types'
 import { ArrowLeft, FileText, Sparkles, Target, Building, Users, Briefcase, Globe } from 'lucide-react'
 import { formatUploadDate } from '@/lib/date-utils'
-import { 
-  LAW_FIRM_OPTIONS, 
-  FUND_MANAGER_OPTIONS, 
-  FUND_ADMIN_OPTIONS, 
+import {
+  LAW_FIRM_OPTIONS,
+  FUND_MANAGER_OPTIONS,
+  FUND_ADMIN_OPTIONS,
   JURISDICTION_OPTIONS
 } from '@/lib/metadata-constants'
+import { SourceDocumentActions } from '@/components/similarity/source-document-actions'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -142,7 +143,7 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
                   )}
                 </div>
               </div>
-              
+              <SourceDocumentActions document={document} />
             </div>
           </CardContent>
         </Card>
