@@ -1,27 +1,25 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Document } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
-import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { 
-  FileText, 
-  Search, 
-  CheckSquare, 
-  Square,
+import {
+  FileText,
   Sparkles,
   AlertTriangle,
-  Loader2,
   TrendingUp,
   Eye,
   Download,
-  Calendar,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Building,
+  Briefcase,
+  Globe,
+  Users,
+  GitCompare
 } from 'lucide-react'
 import { formatUploadDate } from '@/lib/date-utils'
 
@@ -33,145 +31,81 @@ interface SelectedSearchInterfaceProps {
 interface SimilarityResult {
   document: Document
   score: number
+  scores: {
+    sourceScore: number
+    targetScore: number
+    overlapScore: number
+  }
   matching_chunks: Array<{ text: string; score: number }>
 }
 
 export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: SelectedSearchInterfaceProps) {
-  const [documents, setDocuments] = useState<Document[]>([])
-  const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
-  const [searchQuery, setSearchQuery] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
   const [isComparing, setIsComparing] = useState(false)
   const [results, setResults] = useState<SimilarityResult[]>([])
-  const [sortBy, setSortBy] = useState<string>('similarity')
+  const [sortBy, setSortBy] = useState<string>('source_score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  // Fetch all completed documents
   useEffect(() => {
-    const fetchDocuments = async () => {
+    if (!sourceDocument) {
+      setResults([])
+      return
+    }
+
+    const targetIds = (autoSearchTargets ?? []).filter(id => id !== sourceDocument.id)
+
+    if (targetIds.length === 0) {
+      setResults([])
+      return
+    }
+
+    const runAutoSearch = async () => {
+      setIsComparing(true)
       try {
-        const response = await fetch('/api/documents')
-        if (!response.ok) {
-          throw new Error('Failed to fetch documents')
-        }
-        const data = await response.json()
-        const completedDocs = (data.documents || []).filter((doc: Document) => 
-          doc.status === 'completed' && 
-          !doc.metadata?.embeddings_skipped &&
-          doc.id !== sourceDocument?.id // Exclude source document
-        )
-        setDocuments(completedDocs)
-      } catch (error) {
-        console.error('Error fetching documents:', error)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
-    fetchDocuments()
-  }, [sourceDocument?.id])
-
-  // Auto-run search if target documents are provided in URL
-  useEffect(() => {
-    if (autoSearchTargets && autoSearchTargets.length > 0 && sourceDocument && !isLoading) {
-      // Set the selected documents to the provided targets
-      setSelectedDocuments(new Set(autoSearchTargets))
-      
-      // Automatically run the comparison
-      const runAutoSearch = async () => {
-        setIsComparing(true)
-
-        try {
-          const response = await fetch('/api/documents/selected-search', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sourceDocumentId: sourceDocument.id,
-              targetDocumentIds: autoSearchTargets
-            }),
+        const response = await fetch('/api/documents/selected-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceDocumentId: sourceDocument.id,
+            targetDocumentIds: targetIds
           })
+        })
 
-          if (!response.ok) {
-            throw new Error('Failed to compare documents')
-          }
-
-          const data = await response.json()
-          setResults(data)
-        } catch (error) {
-          console.error('Auto-search failed:', error)
-        } finally {
-          setIsComparing(false)
+        if (!response.ok) {
+          throw new Error('Failed to compare documents')
         }
+
+        const data = await response.json()
+        setResults(data)
+      } catch (error) {
+        console.error('Auto-search failed:', error)
+      } finally {
+        setIsComparing(false)
       }
-
-      runAutoSearch()
     }
-  }, [autoSearchTargets, sourceDocument, isLoading])
 
-  // Filter documents based on search query
-  const filteredDocuments = documents.filter(doc =>
-    doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    doc.filename.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+    runAutoSearch()
+  }, [autoSearchTargets, sourceDocument])
 
-  const toggleDocumentSelection = (documentId: string) => {
-    const newSelected = new Set(selectedDocuments)
-    if (newSelected.has(documentId)) {
-      newSelected.delete(documentId)
-    } else {
-      newSelected.add(documentId)
-    }
-    setSelectedDocuments(newSelected)
-  }
-
-  const selectAllDocuments = () => {
-    const allIds = new Set(filteredDocuments.map(doc => doc.id))
-    setSelectedDocuments(allIds)
-  }
-
-  const deselectAllDocuments = () => {
-    setSelectedDocuments(new Set())
-  }
-
-  const handleCompareDocuments = async () => {
-    if (!sourceDocument || selectedDocuments.size === 0) return
-
-    setIsComparing(true)
-
-    try {
-      const response = await fetch('/api/documents/selected-search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sourceDocumentId: sourceDocument.id,
-          targetDocumentIds: Array.from(selectedDocuments)
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to compare documents')
-      }
-
-      const data = await response.json()
-      setResults(data)
-    } catch (error) {
-      console.error('Error comparing documents:', error)
-      alert('Failed to compare documents. Please try again.')
-    } finally {
-      setIsComparing(false)
-    }
+  if (!sourceDocument) {
+    return (
+      <Card className="card-enhanced">
+        <CardContent className="py-12 text-center space-y-3">
+          <Sparkles className="mx-auto h-10 w-10 text-blue-500" />
+          <CardTitle className="text-lg">Select a source document to start</CardTitle>
+          <CardDescription className="max-w-md mx-auto">
+            Pick a document from the dashboard, then choose specific targets here to run a focused similarity search.
+          </CardDescription>
+        </CardContent>
+      </Card>
+    )
   }
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const units = ['Bytes', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${units[i]}`
   }
 
   const formatPageCount = (pageCount?: number) => {
@@ -179,14 +113,27 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
     return pageCount === 1 ? '1 page' : `${pageCount} pages`
   }
 
-  const sortResults = (results: SimilarityResult[]) => {
-    const sorted = [...results].sort((a, b) => {
+  const compareScoreHierarchy = (a: SimilarityResult, b: SimilarityResult) => {
+    const tolerance = 0.000001
+    const sourceDiff = a.scores.sourceScore - b.scores.sourceScore
+    if (Math.abs(sourceDiff) > tolerance) return sourceDiff
+
+    const targetDiff = a.scores.targetScore - b.scores.targetScore
+    if (Math.abs(targetDiff) > tolerance) return targetDiff
+
+    const overlapDiff = a.scores.overlapScore - b.scores.overlapScore
+    if (Math.abs(overlapDiff) > tolerance) return overlapDiff
+
+    const uploadDiff = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
+    if (uploadDiff !== 0) return uploadDiff
+
+    return a.document.title.localeCompare(b.document.title)
+  }
+
+  const sortResults = (items: SimilarityResult[]) => {
+    const sorted = [...items].sort((a, b) => {
       let comparison = 0
-      
       switch (sortBy) {
-        case 'similarity':
-          comparison = a.score - b.score
-          break
         case 'upload_time':
           comparison = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
           break
@@ -196,23 +143,31 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
         case 'size':
           comparison = a.document.file_size - b.document.file_size
           break
+        case 'target_score':
+          comparison = a.scores.targetScore - b.scores.targetScore
+          break
+        case 'overlap_score':
+          comparison = a.scores.overlapScore - b.scores.overlapScore
+          break
+        case 'source_score':
         default:
-          comparison = a.score - b.score
+          comparison = compareScoreHierarchy(a, b)
       }
-      
+      if (comparison === 0) {
+        comparison = compareScoreHierarchy(a, b)
+      }
       return sortOrder === 'asc' ? comparison : -comparison
     })
     return sorted
   }
 
   const toggleSortOrder = () => {
-    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
+    setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
   }
-
 
   const getScoreBadgeColor = (score: number) => {
     if (score >= 0.9) return 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300'
-    if (score >= 0.8) return 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300'
+    if (score >= 0.8) return 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300'
     if (score >= 0.7) return 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-300'
     return 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'
   }
@@ -220,11 +175,9 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
   const downloadPdf = async (document: Document) => {
     try {
       const response = await fetch(`/api/documents/${document.id}/download`)
-      
       if (!response.ok) {
         throw new Error('Failed to download document')
       }
-
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const link = window.document.createElement('a')
@@ -243,352 +196,195 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
   const viewPdf = async (document: Document) => {
     try {
       const response = await fetch(`/api/documents/${document.id}/download`)
-      
       if (!response.ok) {
         throw new Error('Failed to load document')
       }
-
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
-      
-      // Open PDF in a new tab
       window.open(url, '_blank')
-      
-      // Clean up the URL after a short delay to allow the browser to load it
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url)
-      }, 1000)
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000)
     } catch (error) {
       console.error('Error viewing document:', error)
       alert('Failed to open document. Please try again.')
     }
   }
 
+  const sortedResults = sortResults(results)
+
   return (
     <div className="space-y-6">
-      {/* Conditional Rendering: Document Selection (only if NOT auto-searching) OR Results */}
-      {!autoSearchTargets ? (
-        /* Document Selection */
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Search className="h-5 w-5" />
-                  Select Documents to Compare
-                </CardTitle>
-                <CardDescription>
-                  Choose which documents to compare with {sourceDocument ? `"${sourceDocument.title}"` : 'the source document'}
-                </CardDescription>
-              </div>
+      <Card className="card-enhanced">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-purple-500" />
+                Selected Search Results
+              </CardTitle>
+              <CardDescription>
+                Showing {sortedResults.length} of {results.length} selected document{results.length === 1 ? '' : 's'} compared to &quot;{sourceDocument.title}&quot;
+              </CardDescription>
+            </div>
+            {results.length > 1 && (
               <div className="flex items-center gap-2">
-                <Badge variant="secondary">
-                  {selectedDocuments.size} selected
-                </Badge>
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  onClick={selectAllDocuments}
-                  disabled={filteredDocuments.length === 0}
+                <Select value={sortBy} onValueChange={setSortBy}>
+                  <SelectTrigger className="w-44">
+                    <SelectValue placeholder="Sort by..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="source_score">Source Score</SelectItem>
+                    <SelectItem value="target_score">Target Score</SelectItem>
+                    <SelectItem value="overlap_score">Overlap</SelectItem>
+                    <SelectItem value="upload_time">Upload Time</SelectItem>
+                    <SelectItem value="name">Name</SelectItem>
+                    <SelectItem value="size">Size</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleSortOrder}
+                  className="px-3"
+                  aria-label={`Sort ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
                 >
-                  Select All ({filteredDocuments.length})
+                  {sortOrder === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
                 </Button>
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  onClick={deselectAllDocuments}
-                  disabled={selectedDocuments.size === 0}
-                >
-                  Clear Selection
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <Input
-                placeholder="Search documents by title or filename..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Document List */}
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-                <span className="ml-2 text-gray-600 dark:text-gray-400">Loading documents...</span>
-              </div>
-            ) : filteredDocuments.length === 0 ? (
-              <div className="text-center py-8">
-                <AlertTriangle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                  {searchQuery ? 'No documents found' : 'No documents available'}
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400">
-                  {searchQuery 
-                    ? 'Try adjusting your search terms'
-                    : 'No completed documents available for comparison'
-                  }
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-3 max-h-96 overflow-y-auto">
-                {filteredDocuments.map((document) => (
-                  <div
-                    key={document.id}
-                    className={`flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all ${
-                      selectedDocuments.has(document.id)
-                        ? 'border-purple-300 bg-purple-50 dark:border-purple-600 dark:bg-purple-950/20'
-                        : 'border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600'
-                    }`}
-                    onClick={() => toggleDocumentSelection(document.id)}
-                  >
-                    <div className="flex-shrink-0">
-                      {selectedDocuments.has(document.id) ? (
-                        <CheckSquare className="h-5 w-5 text-purple-600" />
-                      ) : (
-                        <Square className="h-5 w-5 text-gray-400" />
-                      )}
-                    </div>
-                    <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded">
-                      <FileText className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-white truncate">
-                        {document.title}
-                      </p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
-                        {document.filename}
-                      </p>
-                    </div>
-                    <div className="text-right text-xs text-gray-500 dark:text-gray-400">
-                      <div>{formatFileSize(document.file_size)}</div>
-                      <div>{formatUploadDate(document.created_at)}</div>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isComparing ? (
+            <div className="flex items-center justify-center p-12">
+              <div className="animate-pulse flex flex-col items-center">
+                <Sparkles className="mb-4 h-12 w-12 text-purple-500 animate-spin" />
+                <p className="text-gray-600 dark:text-gray-400">Running selected similarity search...</p>
+              </div>
+            </div>
+          ) : results.length === 0 ? (
+            <div className="text-center py-12">
+              <AlertTriangle className="mx-auto mb-4 h-16 w-16 text-gray-300 dark:text-gray-600" />
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                No Similar Documents Found
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+                None of the selected documents met the similarity threshold. Try selecting different documents or lowering your thresholds.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {sortedResults.map(result => {
+                const sourceScore = result.scores?.sourceScore ?? result.score
+                const targetScore = result.scores?.targetScore ?? 0
+                const overlapScore = result.scores?.overlapScore ?? 0
 
-            {/* Compare Button */}
-            <div className="flex justify-center pt-4">
-              <Button
-                onClick={handleCompareDocuments}
-                disabled={!sourceDocument || selectedDocuments.size === 0 || isComparing}
-                size="lg"
-                className="min-w-48"
-              >
-                {isComparing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Comparing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Compare {selectedDocuments.size} Document{selectedDocuments.size !== 1 ? 's' : ''}
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        /* Results Section - Always show when auto-searching */
-        <Card className="card-enhanced">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Search className="h-5 w-5" />
-                  Search Results
-                </CardTitle>
-                <CardDescription>
-                  Found {results.length} similar document{results.length !== 1 ? 's' : ''} to &quot;{sourceDocument?.title}&quot;
-                </CardDescription>
-              </div>
-              {results.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <Select value={sortBy} onValueChange={setSortBy}>
-                    <SelectTrigger className="w-40">
-                      <SelectValue placeholder="Sort by..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="similarity">Similarity</SelectItem>
-                      <SelectItem value="upload_time">Upload Time</SelectItem>
-                      <SelectItem value="name">Name</SelectItem>
-                      <SelectItem value="size">Size</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={toggleSortOrder}
-                    className="px-3"
-                    aria-label={`Sort ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
-                  >
-                    {sortOrder === 'asc' ? (
-                      <ArrowUp className="h-4 w-4" />
-                    ) : (
-                      <ArrowDown className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isComparing ? (
-              <div className="flex items-center justify-center p-12">
-                <div className="animate-pulse flex flex-col items-center">
-                  <Sparkles className="h-12 w-12 text-purple-500 mb-4 animate-spin" />
-                  <p className="text-gray-600 dark:text-gray-400">Searching for similar documents...</p>
-                </div>
-              </div>
-            ) : results.length === 0 ? (
-              <div className="text-center py-12">
-                <AlertTriangle className="h-16 w-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                  No Similar Documents Found
-                </h3>
-                <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto">
-                  The selected documents do not meet the similarity threshold with the source document.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {sortResults(results).map((result, _index) => (
-                  <Card key={result.document.id} className="border-l-4 border-l-purple-500">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-lg">
-                            <FileText className="h-6 w-6 text-purple-600 dark:text-purple-400" />
-                          </div>
-                          <div>
-                            <CardTitle className="text-lg">
-                              {result.document.title}
-                            </CardTitle>
-                            <CardDescription className="mt-1">
-                              {result.document.filename}
-                            </CardDescription>
-                          </div>
+                return (
+                <Card
+                  key={result.document.id}
+                  className="border border-blue-100 dark:border-blue-900"
+                >
+                  <div className="flex flex-col gap-3 p-4">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-lg">
+                          <FileText className="h-6 w-6 text-purple-600 dark:text-purple-300" />
                         </div>
-                        
-                        <div className="flex items-center gap-3">
-                          <div className="text-right">
-                            <div className="flex items-center gap-2 mb-1">
-                              <TrendingUp className="h-4 w-4 text-gray-400" />
-                              <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                                Similarity
-                              </span>
+                        <div className="space-y-2">
+                          <div>
+                            <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                              {result.document.title}
+                            </h3>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                            <span>{formatFileSize(result.document.file_size)}</span>
+                            <span>{formatUploadDate(result.document.created_at)}</span>
+                            {formatPageCount(result.document.page_count) && (
+                              <span>{formatPageCount(result.document.page_count)}</span>
+                            )}
+                          </div>
+                          {(result.document.metadata?.law_firm ||
+                            result.document.metadata?.fund_manager ||
+                            result.document.metadata?.fund_admin ||
+                            result.document.metadata?.jurisdiction) && (
+                            <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+                              {result.document.metadata?.law_firm && (
+                                <div className="flex items-center gap-1">
+                                  <Building className="h-3 w-3" />
+                                  {result.document.metadata.law_firm}
+                                </div>
+                              )}
+                              {result.document.metadata?.fund_manager && (
+                                <div className="flex items-center gap-1">
+                                  <Users className="h-3 w-3" />
+                                  {result.document.metadata.fund_manager}
+                                </div>
+                              )}
+                              {result.document.metadata?.fund_admin && (
+                                <div className="flex items-center gap-1">
+                                  <Briefcase className="h-3 w-3" />
+                                  {result.document.metadata.fund_admin}
+                                </div>
+                              )}
+                              {result.document.metadata?.jurisdiction && (
+                                <div className="flex items-center gap-1">
+                                  <Globe className="h-3 w-3" />
+                                  {result.document.metadata.jurisdiction}
+                                </div>
+                              )}
                             </div>
-                            <Badge className={getScoreBadgeColor(result.score)}>
-                              {Math.round(result.score * 100)}%
+                          )}
+                          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                            <Badge variant="outline" className="text-xs">
+                              Target: {(targetScore * 100).toFixed(0)}%
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              Overlap: {(overlapScore * 100).toFixed(0)}%
                             </Badge>
                           </div>
-                          
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => viewPdf(result.document)}
-                            >
-                              <Eye className="h-4 w-4 mr-2" />
-                              View PDF
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => downloadPdf(result.document)}
-                            >
-                              <Download className="h-4 w-4 mr-2" />
-                              Download
-                            </Button>
-                          </div>
                         </div>
                       </div>
-                    </CardHeader>
-
-                    <CardContent className="space-y-4">
-                      {/* Progress bar */}
-                      <div>
-                        <Progress value={result.score * 100} className="h-2" />
-                      </div>
-
-                      {/* Document metadata */}
-                      <div className="space-y-3">
-                        {/* Basic document info */}
-                        <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {formatUploadDate(result.document.created_at)}
-                          </span>
-                          <span>{formatFileSize(result.document.file_size)}</span>
-                          {formatPageCount(result.document.page_count) && (
-                            <span>{formatPageCount(result.document.page_count)}</span>
-                          )}
+                      <div className="flex flex-col items-start sm:items-end gap-2 min-w-[220px]">
+                        <div className="flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-gray-400" />
+                          <Badge className={`${getScoreBadgeColor(sourceScore)} text-base px-3 py-1`}>
+                            {(sourceScore * 100).toFixed(1)}%
+                          </Badge>
                         </div>
-
-                        {/* Business metadata */}
-                        {(result.document.metadata?.law_firm || 
-                          result.document.metadata?.fund_manager || 
-                          result.document.metadata?.fund_admin || 
-                          result.document.metadata?.jurisdiction) && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Business Details:</span>
-                            {result.document.metadata?.law_firm && result.document.metadata.law_firm !== 'N/A' && (
-                              <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-800">
-                                📋 {result.document.metadata.law_firm}
-                              </Badge>
-                            )}
-                            {result.document.metadata?.fund_manager && result.document.metadata.fund_manager !== 'N/A' && (
-                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800">
-                                💼 {result.document.metadata.fund_manager}
-                              </Badge>
-                            )}
-                            {result.document.metadata?.fund_admin && result.document.metadata.fund_admin !== 'N/A' && (
-                              <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-800">
-                                🏢 {result.document.metadata.fund_admin}
-                              </Badge>
-                            )}
-                            {result.document.metadata?.jurisdiction && result.document.metadata.jurisdiction !== 'N/A' && (
-                              <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800">
-                                🌍 {result.document.metadata.jurisdiction}
-                              </Badge>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Legacy metadata (if any) */}
-                        {(result.document.metadata?.investor_type || result.document.metadata?.document_type) && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Other:</span>
-                            {result.document.metadata?.investor_type && (
-                              <Badge variant="outline" className="text-xs">
-                                {result.document.metadata.investor_type}
-                              </Badge>
-                            )}
-                            {result.document.metadata?.document_type && (
-                              <Badge variant="outline" className="text-xs">
-                                {result.document.metadata.document_type}
-                              </Badge>
-                            )}
-                          </div>
-                        )}
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => viewPdf(result.document)}
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => downloadPdf(result.document)}
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Download
+                          </Button>
+                          <Button
+                            size="sm"
+                            className="bg-purple-600 hover:bg-purple-700 text-white focus-visible:ring-purple-400"
+                          >
+                            <GitCompare className="h-4 w-4 mr-1 text-white" />
+                            Compare with Draftable
+                          </Button>
+                        </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                    </div>
+                  </div>
+                </Card>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

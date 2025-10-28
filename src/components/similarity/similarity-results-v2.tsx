@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Search,
   FileText,
-  Calendar,
   Download,
   Sparkles,
   TrendingUp,
@@ -51,9 +50,10 @@ interface SimilarityResultsV2Props {
   results: SimilarityResultV2[]
   sourceDocument: Document
   isLoading: boolean
+  maxResults?: number
 }
 
-export function SimilarityResultsV2({ results, sourceDocument, isLoading }: SimilarityResultsV2Props) {
+export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxResults }: SimilarityResultsV2Props) {
   const [sortBy, setSortBy] = useState<string>('source_score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   // selectedResult state removed - was only used by deleted SimilarityDetailsModal
@@ -71,6 +71,32 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
     return pageCount === 1 ? '1 page' : `${pageCount} pages`
   }
 
+  const getCreatedAtTime = (doc: Document) => {
+    const timestamp = new Date(doc.created_at).getTime()
+    return Number.isFinite(timestamp) ? timestamp : 0
+  }
+
+  const compareScoreHierarchy = (a: SimilarityResultV2, b: SimilarityResultV2) => {
+    const tolerance = 0.000001
+    const sourceDiff = a.scores.sourceScore - b.scores.sourceScore
+    if (Math.abs(sourceDiff) > tolerance) return sourceDiff
+
+    const targetDiff = a.scores.targetScore - b.scores.targetScore
+    if (Math.abs(targetDiff) > tolerance) return targetDiff
+
+    const overlapDiff = a.scores.overlapScore - b.scores.overlapScore
+    if (Math.abs(overlapDiff) > tolerance) return overlapDiff
+
+    const uploadDiff = getCreatedAtTime(a.document) - getCreatedAtTime(b.document)
+    if (uploadDiff !== 0) return uploadDiff
+
+    // Final deterministic tie-breaker by document title then id
+    const titleDiff = a.document.title.localeCompare(b.document.title)
+    if (titleDiff !== 0) return titleDiff
+
+    return a.document.id.localeCompare(b.document.id)
+  }
+
   const sortResults = (results: SimilarityResultV2[]) => {
     const sorted = [...results].sort((a, b) => {
       let comparison = 0
@@ -80,7 +106,7 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
           comparison = a.scores.targetScore - b.scores.targetScore
           break
         case 'source_score':
-          comparison = a.scores.sourceScore - b.scores.sourceScore
+          comparison = compareScoreHierarchy(a, b)
           break
         case 'overlap_score':
           comparison = a.scores.overlapScore - b.scores.overlapScore
@@ -98,9 +124,16 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
           comparison = a.scores.targetScore - b.scores.targetScore
       }
 
+      if (comparison === 0) {
+        comparison = compareScoreHierarchy(a, b)
+      }
+
       return sortOrder === 'asc' ? comparison : -comparison
     })
-    return sorted
+    const limit = Number.isFinite(maxResults ?? NaN) && (maxResults ?? 0) > 0
+      ? Math.min(sorted.length, Math.floor(maxResults ?? 0))
+      : sorted.length
+    return sorted.slice(0, limit)
   }
 
   const toggleSortOrder = () => {
@@ -159,6 +192,10 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
     }
   }
 
+  const sortedResults = sortResults(results)
+  const visibleCount = sortedResults.length
+  const totalResults = results.length
+
   if (isLoading) {
     return (
       <Card className="card-enhanced">
@@ -181,15 +218,15 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Search className="h-5 w-5" />
-                Enhanced Similarity Results
+                Similarity Results
               </CardTitle>
               <CardDescription>
-                Found {results.length} similar document{results.length !== 1 ? 's' : ''} to &quot;{sourceDocument.title}&quot;
+                Showing {visibleCount} of {totalResults} similar document{totalResults !== 1 ? 's' : ''} to &quot;{sourceDocument.title}&quot;
               </CardDescription>
             </div>
-            {results.length > 0 && (
+            {totalResults > 0 && (
               <div className="flex items-center gap-2">
-                {results.length > 1 && (
+                {totalResults > 1 && (
                   <>
                     <Select value={sortBy} onValueChange={setSortBy}>
                       <SelectTrigger className="w-44">
@@ -224,7 +261,7 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
           </div>
         </CardHeader>
         <CardContent>
-          {results.length === 0 ? (
+          {totalResults === 0 ? (
             <div className="text-center py-12">
               <AlertTriangle className="h-16 w-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
@@ -236,46 +273,83 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
               </p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {sortResults(results).map((result) => {
-                return (
-                <Card key={result.document.id} className="border-l-4 border-l-blue-500">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-4">
+            <div className="space-y-4">
+              {sortedResults.map(result => (
+                <Card key={result.document.id} className="border border-blue-100 dark:border-blue-900">
+                  <div className="flex flex-col gap-3 p-4">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex items-start gap-3">
                         <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
                           <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
                         </div>
-                        <div>
-                          <CardTitle className="text-lg">
-                            {result.document.title}
-                          </CardTitle>
-                          <CardDescription className="mt-1">
-                            {result.document.filename}
-                          </CardDescription>
+                        <div className="space-y-2">
+                          <div>
+                            <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                              {result.document.title}
+                            </h3>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                            <span>{formatFileSize(result.document.file_size)}</span>
+                            <span>{formatUploadDate(result.document.created_at)}</span>
+                            {formatPageCount(result.document.page_count) && (
+                              <span>{formatPageCount(result.document.page_count)}</span>
+                            )}
+                          </div>
+                          {(result.document.metadata?.law_firm ||
+                            result.document.metadata?.fund_manager ||
+                            result.document.metadata?.fund_admin ||
+                            result.document.metadata?.jurisdiction) && (
+                            <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+                              {result.document.metadata?.law_firm && (
+                                <div className="flex items-center gap-1">
+                                  <Building className="h-3 w-3" />
+                                  {result.document.metadata.law_firm}
+                                </div>
+                              )}
+                              {result.document.metadata?.fund_manager && (
+                                <div className="flex items-center gap-1">
+                                  <Users className="h-3 w-3" />
+                                  {result.document.metadata.fund_manager}
+                                </div>
+                              )}
+                              {result.document.metadata?.fund_admin && (
+                                <div className="flex items-center gap-1">
+                                  <Briefcase className="h-3 w-3" />
+                                  {result.document.metadata.fund_admin}
+                                </div>
+                              )}
+                              {result.document.metadata?.jurisdiction && (
+                                <div className="flex items-center gap-1">
+                                  <Globe className="h-3 w-3" />
+                                  {result.document.metadata.jurisdiction}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                            <Badge variant="outline" className="text-xs">
+                              Target: {Math.round(result.scores.targetScore * 100)}%
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              Overlap: {Math.round(result.scores.overlapScore * 100)}%
+                            </Badge>
+                          </div>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <div className="flex items-center gap-2 mb-1">
-                            <TrendingUp className="h-4 w-4 text-gray-400" />
-                            <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                              Source Score
-                            </span>
-                          </div>
-                          <Badge className={`${getScoreBadgeColor(result.scores.sourceScore)} text-lg px-3 py-1`}>
+                      <div className="flex flex-col items-start sm:items-end gap-2 min-w-[220px]">
+                        <div className="flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-gray-400" />
+                          <Badge className={`${getScoreBadgeColor(result.scores.sourceScore)} text-base px-3 py-1`}>
                             {Number((result.scores.sourceScore * 100).toFixed(1))}%
                           </Badge>
                         </div>
-
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap justify-end gap-2">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => viewPdf(result.document)}
                           >
-                            <Eye className="h-4 w-4 mr-2" />
+                            <Eye className="h-4 w-4 mr-1" />
                             View
                           </Button>
                           <Button
@@ -283,86 +357,22 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading }: Simi
                             size="sm"
                             onClick={() => downloadPdf(result.document)}
                           >
-                            <Download className="h-4 w-4 mr-2" />
+                            <Download className="h-4 w-4 mr-1" />
                             Download
                           </Button>
                           <Button
-                            variant="outline"
                             size="sm"
-                            className="opacity-70 cursor-default"
+                            className="bg-blue-600 hover:bg-blue-700 text-white focus-visible:ring-blue-400"
                           >
-                            <GitCompare className="h-4 w-4 mr-2" />
+                            <GitCompare className="h-4 w-4 mr-1 text-white" />
                             Compare with Draftable
                           </Button>
                         </div>
                       </div>
                     </div>
-                  </CardHeader>
-
-                  <CardContent className="space-y-4">
-                    {/* Context Scores Row */}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                        Supporting Metrics:
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        Target Score: {Math.round(result.scores.targetScore * 100)}%
-                      </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        Overlap: {Math.round(result.scores.overlapScore * 100)}%
-                      </Badge>
-                    </div>
-
-                    {/* Document metadata */}
-                    <div className="space-y-3 border-t pt-4">
-                      <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {formatUploadDate(result.document.created_at)}
-                        </span>
-                        <span>{formatFileSize(result.document.file_size)}</span>
-                        {formatPageCount(result.document.page_count) && (
-                          <span>{formatPageCount(result.document.page_count)}</span>
-                        )}
-                      </div>
-
-                      {/* Business metadata */}
-                      {(result.document.metadata?.law_firm ||
-  result.document.metadata?.fund_manager ||
-  result.document.metadata?.fund_admin ||
-  result.document.metadata?.jurisdiction) && (
-    <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
-      {result.document.metadata?.law_firm && (
-        <div className="flex items-center gap-1">
-          <Building className="h-3 w-3" />
-          {result.document.metadata.law_firm}
-        </div>
-      )}
-      {result.document.metadata?.fund_manager && (
-        <div className="flex items-center gap-1">
-          <Users className="h-3 w-3" />
-          {result.document.metadata.fund_manager}
-        </div>
-      )}
-      {result.document.metadata?.fund_admin && (
-        <div className="flex items-center gap-1">
-          <Briefcase className="h-3 w-3" />
-          {result.document.metadata.fund_admin}
-        </div>
-      )}
-      {result.document.metadata?.jurisdiction && (
-        <div className="flex items-center gap-1">
-          <Globe className="h-3 w-3" />
-          {result.document.metadata.jurisdiction}
-        </div>
-      )}
-    </div>
-  )}
-                                        </div>
-                  </CardContent>
+                  </div>
                 </Card>
-              )
-              })}
+              ))}
             </div>
           )}
         </CardContent>

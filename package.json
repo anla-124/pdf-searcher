@@ -6,13 +6,14 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node .next/standalone/server.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "lint:unused": "eslint . --fix --quiet",
     "lint:strict": "eslint . --max-warnings 0",
     "cleanup": "npm run lint:fix",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "postbuild": "node scripts/prepare-standalone.js"
   },
   "keywords": [],
   "author": "",

@@ -41,6 +41,12 @@ export interface SimilaritySearchOptions {
   stage2_fallbackThreshold?: number // Default: 0.8 (auto-clamped if > threshold)
   stage2_fallbackEnabled?: boolean  // Default: true
   stage2_timeout?: number           // Default: 180000ms
+
+  // Source scope options
+  sourcePageRange?: {
+    start_page: number
+    end_page: number
+  }
 }
 
 export interface SimilaritySearchResult {
@@ -75,6 +81,29 @@ export async function executeSimilaritySearch(
   try {
     logger.info('Starting similarity search pipeline', { sourceDocId })
 
+    const sourcePageRange = options.sourcePageRange
+    let preloadedSourceChunks: Chunk[] | undefined
+    let sourceVectorOverride: number[] | undefined
+
+    if (sourcePageRange) {
+      logger.info('Applying source page range constraint', {
+        sourceDocId,
+        startPage: sourcePageRange.start_page,
+        endPage: sourcePageRange.end_page
+      })
+
+      preloadedSourceChunks = await fetchDocumentChunks(sourceDocId, { pageRange: sourcePageRange })
+
+      if (preloadedSourceChunks.length === 0) {
+        throw new Error(
+          `Source document ${sourceDocId} has no embeddings within pages ` +
+          `${sourcePageRange.start_page}-${sourcePageRange.end_page}`
+        )
+      }
+
+      sourceVectorOverride = computeCentroidFromChunks(preloadedSourceChunks)
+    }
+
     // ============================================================
     // STAGE 0: Document-Level Centroid Candidate Retrieval
     // ============================================================
@@ -82,7 +111,9 @@ export async function executeSimilaritySearch(
 
     const stage0Result = await stage0CandidateRetrieval(sourceDocId, {
       topK: options.stage0_topK ?? 600,
-      filters: options.stage0_filters ?? {}
+      filters: options.stage0_filters ?? {},
+      overrideSourceVector: sourceVectorOverride,
+      sourcePageRange
     })
 
     if (stage0Result.candidateIds.length === 0) {
@@ -106,6 +137,16 @@ export async function executeSimilaritySearch(
     // ============================================================
     // STAGE 1: Candidate-Aware Chunk-Level Pre-Filter
     // ============================================================
+    let sourceChunks = preloadedSourceChunks
+
+    if (!sourceChunks) {
+      sourceChunks = await fetchDocumentChunks(sourceDocId)
+    }
+
+    if (sourceChunks.length === 0) {
+      throw new Error(`Source document ${sourceDocId} has no chunks`)
+    }
+
     const stage1TopK = options.stage1_topK ?? 250
     const stage1Enabled = options.stage1_enabled ?? true
     const shouldRunStage1 = stage1Enabled && stage0Result.candidateIds.length > stage1TopK
@@ -114,13 +155,6 @@ export async function executeSimilaritySearch(
 
     if (shouldRunStage1) {
       logger.info('Stage 1: chunk-level pre-filtering started', { sourceDocId })
-
-      // Fetch source document chunks (needed for Stage 1)
-      const sourceChunks = await fetchDocumentChunks(sourceDocId)
-
-      if (sourceChunks.length === 0) {
-        throw new Error(`Source document ${sourceDocId} has no chunks`)
-      }
 
       stage1Result = await stage1ChunkPrefilter(
         sourceChunks,
@@ -174,16 +208,24 @@ export async function executeSimilaritySearch(
     const sourceDoc = await fetchDocumentMetadata(sourceDocId)
 
     if (!sourceDoc.effective_chunk_count) {
-      throw new Error(
-        `Source document ${sourceDocId} missing effective_chunk_count. ` +
-        `Please reprocess or run backfill script.`
+      logger.warn(
+        'Source document missing effective_chunk_count; using chunk count from current scope',
+        { sourceDocId }
       )
     }
 
     if (!sourceDoc.total_tokens || sourceDoc.total_tokens <= 0) {
+      logger.warn(
+        'Source document missing total_tokens; using chunk-derived token total',
+        { sourceDocId }
+      )
+    }
+
+    const sourceTotalTokens = sourceChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
+
+    if (sourceTotalTokens <= 0) {
       throw new Error(
-        `Source document ${sourceDocId} missing total_tokens. ` +
-        `Please run backfill script: npx tsx scripts/backfill-token-counts.ts`
+        `Source document ${sourceDocId} has no tokenized content within the selected scope`
       )
     }
 
@@ -208,9 +250,9 @@ export async function executeSimilaritySearch(
 
     const stage2Results = await stage2FinalScoring(
       {
-        id: sourceDoc.id,
-        effective_chunk_count: sourceDoc.effective_chunk_count,
-        total_tokens: sourceDoc.total_tokens
+        ...sourceDoc,
+        effective_chunk_count: sourceChunks.length,
+        total_tokens: sourceTotalTokens
       },
       stage1Result.candidateIds,  // Only candidates from Stage 1!
       {
@@ -218,7 +260,9 @@ export async function executeSimilaritySearch(
         threshold: options.stage2_threshold ?? 0.85,
         fallbackThreshold: options.stage2_fallbackThreshold ?? 0.8,
         fallbackEnabled: options.stage2_fallbackEnabled ?? true,
-        timeout: options.stage2_timeout ?? 180000
+        timeout: options.stage2_timeout ?? 180000,
+        sourceChunksOverride: sourceChunks,
+        sourcePageRange
       }
     )
 
@@ -269,11 +313,42 @@ export async function executeSimilaritySearch(
   }
 }
 
+function computeCentroidFromChunks(chunks: Chunk[]): number[] {
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    throw new Error('Cannot compute centroid from empty chunk collection')
+  }
+
+  const dimension = chunks[0]?.embedding.length ?? 0
+  if (dimension === 0) {
+    throw new Error('Chunk embeddings missing dimensions; cannot compute centroid')
+  }
+
+  const centroid = new Array(dimension).fill(0)
+
+  for (const chunk of chunks) {
+    if (!Array.isArray(chunk.embedding) || chunk.embedding.length !== dimension) {
+      throw new Error('Inconsistent embedding dimension encountered while computing centroid')
+    }
+    for (let i = 0; i < dimension; i++) {
+      centroid[i] += chunk.embedding[i]
+    }
+  }
+
+  for (let i = 0; i < dimension; i++) {
+    centroid[i] /= chunks.length
+  }
+
+  return centroid
+}
+
 /**
  * Fetch all chunks for a document from Supabase
  * Returns chunks with pre-normalized embeddings
  */
-async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
+async function fetchDocumentChunks(
+  documentId: string,
+  options: { pageRange?: { start_page: number; end_page: number } } = {}
+): Promise<Chunk[]> {
   const supabase = await createServiceClient()
 
   const defaultPageSize = 100
@@ -291,10 +366,18 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
     const pageSizeUsed = currentPageSize
     const end = start + pageSizeUsed - 1
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('document_embeddings')
       .select('chunk_index, page_number, embedding, chunk_text, token_count')
       .eq('document_id', documentId)
+
+    if (options.pageRange) {
+      query = query
+        .gte('page_number', options.pageRange.start_page)
+        .lte('page_number', options.pageRange.end_page)
+    }
+
+    const { data, error } = await query
       .order('chunk_index', { ascending: true })
       .range(start, end)
       .returns<Array<{

@@ -4,6 +4,7 @@ const nextConfig = {
 
   // Docker configuration
   output: 'standalone',
+  outputFileTracingRoot: __dirname,
 
   // Performance optimizations
   // Enable gzip compression

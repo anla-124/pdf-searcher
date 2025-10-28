@@ -6,12 +6,43 @@ import { DashboardLayout } from '@/components/dashboard/layout'
 import { SelectedSearchInterface } from '@/components/similarity/selected-search-interface'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, FileText, Users, Target } from 'lucide-react'
+import {
+  ArrowLeft,
+  FileText,
+  Users,
+  Target,
+  Building,
+  Briefcase,
+  Globe
+} from 'lucide-react'
 import { formatUploadDate } from '@/lib/date-utils'
+import {
+  LAW_FIRM_OPTIONS,
+  FUND_MANAGER_OPTIONS,
+  FUND_ADMIN_OPTIONS,
+  JURISDICTION_OPTIONS
+} from '@/lib/metadata-constants'
+import { SourceDocumentActions } from '@/components/similarity/source-document-actions'
 
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}
+
+type MetadataOption = { value: string; label: string }
+
+const resolveOptionLabel = (value: unknown, options: ReadonlyArray<MetadataOption>): string => {
+  if (typeof value !== 'string' || value.length === 0) {
+    return value ? String(value) : ''
+  }
+  return options.find(opt => opt.value === value)?.label ?? value
+}
+
+const formatFileSize = (bytes?: number | null) => {
+  if (!bytes || bytes <= 0) return '0 Bytes'
+  const k = 1024
+  const sizes = ['Bytes', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
 export default async function SelectedSearchPage({ searchParams }: PageProps) {
@@ -58,14 +89,6 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
   // Otherwise, show the selection interface
   const shouldAutoSearch = sourceDocument && targetIds.length > 0
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -84,9 +107,6 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
                 <Users className="h-6 w-6 text-purple-500" />
                 Selected Search
               </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                {shouldAutoSearch ? 'Automatic similarity comparison results' : 'Compare specific documents for debugging similarity algorithm'}
-              </p>
             </div>
           </div>
         </div>
@@ -101,23 +121,16 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
                   <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-lg">
-                    <FileText className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+                    <FileText className="h-6 w-6 text-purple-600 dark:text-purple-300" />
                   </div>
-                  <div className="space-y-3">
-                    <div>
-                      <h3 className="font-semibold text-gray-900 dark:text-white">
-                        {sourceDocument.title}
-                      </h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {sourceDocument.filename}
-                      </p>
-                    </div>
-                    
-                    {/* Basic document info */}
-                    <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                  <div className="space-y-2">
+                    <h3 className="font-semibold text-gray-900 dark:text-white">
+                      {sourceDocument.title}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
                       <span>{formatFileSize(sourceDocument.file_size)}</span>
                       <span>{formatUploadDate(sourceDocument.created_at)}</span>
                       {sourceDocument.page_count && (
@@ -125,54 +138,40 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
                       )}
                     </div>
 
-                    {/* Business metadata */}
-                    {(sourceDocument.metadata?.law_firm || 
-                      sourceDocument.metadata?.fund_manager || 
-                      sourceDocument.metadata?.fund_admin || 
+                    {(sourceDocument.metadata?.law_firm ||
+                      sourceDocument.metadata?.fund_manager ||
+                      sourceDocument.metadata?.fund_admin ||
                       sourceDocument.metadata?.jurisdiction) && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Business Details:</span>
-                        {sourceDocument.metadata?.law_firm && sourceDocument.metadata.law_firm !== 'N/A' && (
-                          <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-800">
-                            📋 {sourceDocument.metadata.law_firm}
-                          </Badge>
+                      <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+                        {sourceDocument.metadata?.law_firm && (
+                          <div className="flex items-center gap-1">
+                            <Building className="h-3 w-3" />
+                            {resolveOptionLabel(sourceDocument.metadata?.law_firm, LAW_FIRM_OPTIONS)}
+                          </div>
                         )}
-                        {sourceDocument.metadata?.fund_manager && sourceDocument.metadata.fund_manager !== 'N/A' && (
-                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800">
-                            💼 {sourceDocument.metadata.fund_manager}
-                          </Badge>
+                        {sourceDocument.metadata?.fund_manager && (
+                          <div className="flex items-center gap-1">
+                            <Users className="h-3 w-3" />
+                            {resolveOptionLabel(sourceDocument.metadata?.fund_manager, FUND_MANAGER_OPTIONS)}
+                          </div>
                         )}
-                        {sourceDocument.metadata?.fund_admin && sourceDocument.metadata.fund_admin !== 'N/A' && (
-                          <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-800">
-                            🏢 {sourceDocument.metadata.fund_admin}
-                          </Badge>
+                        {sourceDocument.metadata?.fund_admin && (
+                          <div className="flex items-center gap-1">
+                            <Briefcase className="h-3 w-3" />
+                            {resolveOptionLabel(sourceDocument.metadata?.fund_admin, FUND_ADMIN_OPTIONS)}
+                          </div>
                         )}
-                        {sourceDocument.metadata?.jurisdiction && sourceDocument.metadata.jurisdiction !== 'N/A' && (
-                          <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800">
-                            🌍 {sourceDocument.metadata.jurisdiction}
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Legacy metadata (if any) */}
-                    {(sourceDocument.metadata?.investor_type || sourceDocument.metadata?.document_type) && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Other:</span>
-                        {sourceDocument.metadata?.investor_type && (
-                          <Badge variant="outline" className="text-xs">
-                            {sourceDocument.metadata.investor_type}
-                          </Badge>
-                        )}
-                        {sourceDocument.metadata?.document_type && (
-                          <Badge variant="outline" className="text-xs">
-                            {sourceDocument.metadata.document_type}
-                          </Badge>
+                        {sourceDocument.metadata?.jurisdiction && (
+                          <div className="flex items-center gap-1">
+                            <Globe className="h-3 w-3" />
+                            {resolveOptionLabel(sourceDocument.metadata?.jurisdiction, JURISDICTION_OPTIONS)}
+                          </div>
                         )}
                       </div>
                     )}
                   </div>
                 </div>
+                <SourceDocumentActions document={sourceDocument} accent="purple" />
               </div>
             </CardContent>
           </Card>

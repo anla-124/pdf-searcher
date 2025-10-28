@@ -11,6 +11,63 @@ import { getPineconeIndex } from '@/lib/pinecone'
 import { logger } from '@/lib/logger'
 import { Stage0Result } from '../types'
 
+const PINECONE_OPERATOR_IN = '$in'
+const PINECONE_OPERATOR_EQ = '$eq'
+const PINECONE_OPERATOR_NE = '$ne'
+
+function sanitizeDocumentIdFilter(
+  existingFilter: unknown,
+  sourceDocId: string
+): Record<string, unknown> {
+  if (existingFilter === undefined) {
+    return { [PINECONE_OPERATOR_NE]: sourceDocId }
+  }
+
+  if (typeof existingFilter === 'string') {
+    if (existingFilter === sourceDocId) {
+      return { [PINECONE_OPERATOR_IN]: [] }
+    }
+    return { [PINECONE_OPERATOR_IN]: [existingFilter] }
+  }
+
+  if (existingFilter && typeof existingFilter === 'object' && !Array.isArray(existingFilter)) {
+    const filter = { ...(existingFilter as Record<string, unknown>) }
+
+    const rawIn = filter[PINECONE_OPERATOR_IN]
+    if (Array.isArray(rawIn)) {
+      const allowed = rawIn.filter(
+        (value): value is string => typeof value === 'string' && value !== sourceDocId
+      )
+      filter[PINECONE_OPERATOR_IN] = allowed
+      if (allowed.length === 0) {
+        return { [PINECONE_OPERATOR_IN]: [] }
+      }
+    }
+
+    const rawEq = filter[PINECONE_OPERATOR_EQ]
+    if (typeof rawEq === 'string') {
+      if (rawEq === sourceDocId) {
+        return { [PINECONE_OPERATOR_IN]: [] }
+      }
+    }
+
+    if (
+      filter[PINECONE_OPERATOR_IN] === undefined &&
+      filter[PINECONE_OPERATOR_EQ] === undefined &&
+      filter[PINECONE_OPERATOR_NE] === undefined
+    ) {
+      filter[PINECONE_OPERATOR_NE] = sourceDocId
+    } else if (filter[PINECONE_OPERATOR_IN] === undefined && filter[PINECONE_OPERATOR_EQ] === undefined) {
+      // Ensure source document is excluded even when other constraints exist
+      filter[PINECONE_OPERATOR_NE] = sourceDocId
+    }
+
+    return filter
+  }
+
+  return { [PINECONE_OPERATOR_NE]: sourceDocId }
+}
+
 /**
  * Retrieve top candidates using document-level centroid similarity
  * CRITICAL: Uses pre-computed and cached centroids for speed
@@ -24,11 +81,21 @@ export async function stage0CandidateRetrieval(
   options: {
     topK?: number
     filters?: Record<string, unknown>
+    overrideSourceVector?: number[]
+    sourcePageRange?: {
+      start_page: number
+      end_page: number
+    }
   } = {}
 ): Promise<Stage0Result> {
 
   const startTime = Date.now()
-  const { topK = 600, filters = {} } = options
+  const {
+    topK = 600,
+    filters = {},
+    overrideSourceVector,
+    sourcePageRange
+  } = options
 
   try {
     // 1. Get source document centroid (pre-computed and cached)
@@ -43,7 +110,7 @@ export async function stage0CandidateRetrieval(
       throw new Error(`Source document not found: ${sourceDocId}`)
     }
 
-    if (!sourceDoc.centroid_embedding) {
+    if (!overrideSourceVector && !sourceDoc.centroid_embedding) {
       throw new Error(
         `Source document ${sourceDocId} missing centroid_embedding. ` +
         `Please reprocess or run backfill script.`
@@ -66,18 +133,25 @@ export async function stage0CandidateRetrieval(
     })
 
     // Build Pinecone filter
+    const existingDocumentIdFilter = Object.prototype.hasOwnProperty.call(filters, 'document_id')
+      ? (filters as Record<string, unknown>)[ 'document_id' ]
+      : undefined
+
     const pineconeFilter: Record<string, unknown> = {
       ...filters,
-      document_id: { $ne: sourceDocId }  // Exclude self
+      document_id: sanitizeDocumentIdFilter(existingDocumentIdFilter, sourceDocId)
     }
 
     // Parse centroid if stored as string in Supabase
-    let centroidVector = sourceDoc.centroid_embedding
-    if (typeof centroidVector === 'string') {
-      try {
-        centroidVector = JSON.parse(centroidVector)
-      } catch (parseError) {
-        throw new Error(`Failed to parse centroid embedding for document ${sourceDocId}: ${parseError}`)
+    let centroidVector: unknown = overrideSourceVector ?? sourceDoc.centroid_embedding
+
+    if (!overrideSourceVector) {
+      if (typeof centroidVector === 'string') {
+        try {
+          centroidVector = JSON.parse(centroidVector)
+        } catch (parseError) {
+          throw new Error(`Failed to parse centroid embedding for document ${sourceDocId}: ${parseError}`)
+        }
       }
     }
 
@@ -89,7 +163,15 @@ export async function stage0CandidateRetrieval(
     logger.debug('Stage 0: Pinecone query params', {
       vectorLength: centroidVector.length,
       topK: topK * 2,
-      filter: pineconeFilter
+      filter: pineconeFilter,
+      ...(sourcePageRange
+        ? {
+            pageRange: {
+              start_page: sourcePageRange.start_page,
+              end_page: sourcePageRange.end_page
+            }
+          }
+        : {})
     })
 
     const queryResponse = await getPineconeIndex().query({

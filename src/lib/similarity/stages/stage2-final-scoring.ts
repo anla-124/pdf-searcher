@@ -39,6 +39,11 @@ export async function stage2FinalScoring(
     fallbackThreshold?: number
     fallbackEnabled?: boolean
     timeout?: number
+    sourceChunksOverride?: Chunk[]
+    sourcePageRange?: {
+      start_page: number
+      end_page: number
+    }
   } = {}
 ): Promise<SimilarityResult[]> {
 
@@ -60,21 +65,38 @@ export async function stage2FinalScoring(
 
     // 1. Validate source document has total_tokens
     if (sourceDoc.total_tokens == null || sourceDoc.total_tokens <= 0) {
-      throw new Error(`Source document ${sourceDoc.id} missing total_tokens (required for token-based similarity)`)
+      logger.warn('Stage 2: source document missing total_tokens; deriving from chunk data', {
+        sourceDocId: sourceDoc.id
+      })
     }
 
     // 2. Fetch source chunks once (reuse for all candidates)
-    const sourceChunks = await fetchDocumentChunks(sourceDoc.id)
+    const sourceChunks = Array.isArray(options.sourceChunksOverride) && options.sourceChunksOverride.length > 0
+      ? options.sourceChunksOverride
+      : await fetchDocumentChunks(
+        sourceDoc.id,
+        options.sourcePageRange ? { pageRange: options.sourcePageRange } : undefined
+      )
 
     if (sourceChunks.length === 0) {
       throw new Error(`No chunks found for source document ${sourceDoc.id}`)
     }
 
+    const sourceTotalTokens = sourceChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
+
+    if (sourceTotalTokens <= 0) {
+      throw new Error(
+        `Source document ${sourceDoc.id} has no tokenized content in the selected scope`
+      )
+    }
+
+    const effectiveChunkCount = sourceChunks.length
+
     logger.info('Stage 2: loaded source chunks', {
       candidateCount: candidateIds.length,
       sourceChunkCount: sourceChunks.length,
-      sourceTotalTokens: sourceDoc.total_tokens,
-      effectiveChunkCount: sourceDoc.effective_chunk_count
+      sourceTotalTokens,
+      effectiveChunkCount
     })
 
     // 2. Process candidates in parallel batches
@@ -92,7 +114,7 @@ export async function stage2FinalScoring(
     }
 
     const batchPromises = batches.map(batch =>
-      processBatch(batch, sourceDoc, sourceChunks, matchOptions, timeout)
+      processBatch(batch, sourceDoc, sourceChunks, matchOptions, timeout, sourceTotalTokens)
     )
 
     const batchResults = await Promise.all(batchPromises)
@@ -151,7 +173,8 @@ async function processBatch(
     fallbackThreshold?: number
     fallbackEnabled: boolean
   },
-  timeout: number
+  timeout: number,
+  sourceTotalTokens: number
 ): Promise<(SimilarityResult | null)[]> {
 
   const results: (SimilarityResult | null)[] = []
@@ -162,7 +185,7 @@ async function processBatch(
       let timeoutId: NodeJS.Timeout | null = null
 
       const result = await Promise.race([
-        processCandidate(candidateId, sourceDoc, sourceChunks, matchOptions).then(result => {
+        processCandidate(candidateId, sourceDoc, sourceChunks, matchOptions, sourceTotalTokens).then(result => {
           // Clear timeout if processing completes successfully
           if (timeoutId) clearTimeout(timeoutId)
           return result
@@ -204,7 +227,8 @@ async function processCandidate(
     threshold: number
     fallbackThreshold?: number
     fallbackEnabled: boolean
-  }
+  },
+  sourceTotalTokens: number
 ): Promise<SimilarityResult | null> {
 
   // 1. Fetch candidate chunks and metadata
@@ -256,14 +280,14 @@ async function processCandidate(
   // Token-based metrics eliminate chunking artifacts and provide accurate similarity percentages
   logger.debug('Stage 2: computing token-based score for candidate', {
     candidateId,
-    sourceTotalTokens: sourceDoc.total_tokens,
+    sourceTotalTokens,
     candidateTotalTokens,
     matchedPairs: matches.length
   })
 
   const scores = computeAdaptiveScore(
     matches,
-    sourceDoc.total_tokens!,  // Non-null assertion safe - validated above
+    sourceTotalTokens,
     candidateTotalTokens
   )
 
@@ -310,7 +334,10 @@ async function processCandidate(
  * Fetch all chunks for a document from Supabase
  * Returns chunks with pre-normalized embeddings
  */
-async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
+async function fetchDocumentChunks(
+  documentId: string,
+  options: { pageRange?: { start_page: number; end_page: number } } = {}
+): Promise<Chunk[]> {
   const supabase = await createServiceClient()
 
   const defaultPageSize = 100
@@ -328,10 +355,18 @@ async function fetchDocumentChunks(documentId: string): Promise<Chunk[]> {
     const pageSizeUsed = currentPageSize
     const end = start + pageSizeUsed - 1
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('document_embeddings')
       .select('chunk_index, page_number, embedding, chunk_text, token_count')
       .eq('document_id', documentId)
+
+    if (options.pageRange) {
+      query = query
+        .gte('page_number', options.pageRange.start_page)
+        .lte('page_number', options.pageRange.end_page)
+    }
+
+    const { data, error } = await query
       .order('chunk_index', { ascending: true })
       .range(start, end)
       .returns<Array<{

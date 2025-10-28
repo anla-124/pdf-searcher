@@ -24,6 +24,11 @@ interface SimilarityResult {
     metadata?: Record<string, unknown>
   }
   score: number
+  scores: {
+    sourceScore: number
+    targetScore: number
+    overlapScore: number
+  }
   matching_chunks: Array<{ text: string; score: number }>
 }
 
@@ -146,6 +151,11 @@ export async function POST(request: NextRequest) {
           metadata: targetDoc?.metadata as Record<string, unknown> | undefined
         },
         score: result.scores.sourceScore,
+        scores: {
+          sourceScore: result.scores.sourceScore,
+          targetScore: result.scores.targetScore,
+          overlapScore: result.scores.overlapScore
+        },
         matching_chunks: result.sections.map(section => ({
           text: `Pages ${section.docB_pageRange} (${section.chunkCount} chunks, avg score: ${(section.avgScore * 100).toFixed(1)}%)`,
           score: section.avgScore
@@ -174,6 +184,11 @@ export async function POST(request: NextRequest) {
           metadata: doc.metadata as Record<string, unknown> | undefined
         },
         score: 0,
+        scores: {
+          sourceScore: 0,
+          targetScore: 0,
+          overlapScore: 0
+        },
         matching_chunks: []
       })
     }

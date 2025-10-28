@@ -29,7 +29,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex items-center space-x-2">
             <div className="flex h-8 w-8 items-center justify-center">
               <Image 
-                src="/Mark Logo - Color.png" 
+                src="/mark-logo-color.png" 
                 alt="Company Logo" 
                 width={32} 
                 height={32}

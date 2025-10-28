@@ -1009,6 +1009,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                 <Button
                   size="sm"
                   variant="default"
+                  className="bg-purple-600 hover:bg-purple-700 focus-visible:ring-purple-400"
                   disabled={selectedDocuments.size < 2}
                   onClick={() => {
                     const ids = Array.from(selectedDocuments)

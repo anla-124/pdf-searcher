@@ -87,6 +87,89 @@ function buildStage0Filters(rawFilters: RawFilters, userId: string): {
   return { pineconeFilters, appliedFilters }
 }
 
+interface SanitizedPageRangeResult {
+  value?: {
+    start_page: number
+    end_page: number
+  }
+  useEntireDocument: boolean
+  error?: string
+}
+
+function parsePageNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value)
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) {
+      return undefined
+    }
+    const parsed = Number.parseInt(trimmed, 10)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+
+  return undefined
+}
+
+function sanitizePageRangeInput(
+  input: unknown,
+  maxPage?: number
+): SanitizedPageRangeResult {
+  if (!input || typeof input !== 'object') {
+    return { useEntireDocument: true }
+  }
+
+  const raw = input as Record<string, unknown>
+  const useEntireDocument = raw.use_entire_document !== false
+
+  if (useEntireDocument) {
+    return { useEntireDocument: true }
+  }
+
+  const start = parsePageNumber(raw.start_page)
+  const end = parsePageNumber(raw.end_page)
+
+  if (start === undefined || end === undefined) {
+    return {
+      useEntireDocument: false,
+      error: 'Enter both start and end pages.'
+    }
+  }
+
+  if (start < 1 || end < 1) {
+    return {
+      useEntireDocument: false,
+      error: 'Page numbers must be at least 1.'
+    }
+  }
+
+  if (start > end) {
+    return {
+      useEntireDocument: false,
+      error: 'Start page must be less than or equal to end page.'
+    }
+  }
+
+  if (maxPage !== undefined) {
+    if (start > maxPage || end > maxPage) {
+      return {
+        useEntireDocument: false,
+        error: `Page range must be within 1-${maxPage}.`
+      }
+    }
+  }
+
+  return {
+    useEntireDocument: false,
+    value: {
+      start_page: start,
+      end_page: end
+    }
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -112,7 +195,9 @@ export async function POST(
       stage1_neighborsPerChunk,
       stage2_parallelWorkers,
       stage2_fallbackThreshold = 0.8,
-      filters: rawFilters = {}
+      filters: rawFilters = {},
+      source_min_score = 0.7,
+      target_min_score = 0.7
     }: {
       stage0_topK?: number
       stage1_topK?: number
@@ -121,6 +206,8 @@ export async function POST(
       stage2_parallelWorkers?: number
       stage2_fallbackThreshold?: number
       filters?: Record<string, unknown>
+      source_min_score?: number
+      target_min_score?: number
     } = body
 
     // Extract non-Pinecone filter directives (handled in later stages)
@@ -137,7 +224,7 @@ export async function POST(
     // Verify document exists and belongs to user
     const { data: document, error: docError } = await supabase
       .from('documents')
-      .select('id, title, status, centroid_embedding, effective_chunk_count')
+      .select('id, title, status, centroid_embedding, effective_chunk_count, page_count')
       .eq('id', id)
       .eq('user_id', user.id)
       .single()
@@ -151,6 +238,18 @@ export async function POST(
         error: 'Document is not ready for similarity search',
         status: document.status
       }, { status: 400 })
+    }
+
+    const {
+      value: sanitizedPageRange,
+      error: pageRangeError
+    } = sanitizePageRangeInput(
+      requestedPageRange,
+      typeof document.page_count === 'number' ? document.page_count : undefined
+    )
+
+    if (pageRangeError) {
+      return NextResponse.json({ error: pageRangeError }, { status: 400 })
     }
 
     // Validate document has required fields for similarity search
@@ -191,8 +290,14 @@ export async function POST(
       stage1_enabled,
       stage1_neighborsPerChunk,
       stage2_parallelWorkers,
-      stage2_fallbackThreshold
+      stage2_fallbackThreshold,
+      sourcePageRange: sanitizedPageRange
     })
+
+    const filteredResults = searchResult.results.filter(result =>
+      result.scores.sourceScore >= source_min_score &&
+      result.scores.targetScore >= target_min_score
+    )
 
     logger.info('Similarity search completed', {
       documentId: id,
@@ -203,11 +308,17 @@ export async function POST(
     })
 
     // Format response
+    const pageRangeConfig = requestedPageRange !== undefined
+      ? sanitizedPageRange
+        ? { ...sanitizedPageRange, use_entire_document: false }
+        : { use_entire_document: true }
+      : undefined
+
     const response = {
       document_id: id,
       document_title: document.title,
-      results: searchResult.results,
-      total_results: searchResult.results.length,
+      results: filteredResults,
+      total_results: filteredResults.length,
       timing: {
         stage0_ms: searchResult.timing.stage0_ms,
         stage1_ms: searchResult.timing.stage1_ms,
@@ -228,11 +339,13 @@ export async function POST(
         stage2_fallbackThreshold,
         filters: {
           ...appliedFilters,
-          ...(requestedPageRange !== undefined ? { page_range: requestedPageRange } : {}),
+          ...(pageRangeConfig ? { page_range: pageRangeConfig } : {}),
           ...(requestedMinScore !== undefined ? { min_score: requestedMinScore } : {}),
           ...(requestedThreshold !== undefined ? { threshold: requestedThreshold } : {}),
           ...(requestedTopK !== undefined ? { topK: requestedTopK } : {})
-        }
+        },
+        source_min_score,
+        target_min_score
       },
       version: '2.0.0',
       features: {

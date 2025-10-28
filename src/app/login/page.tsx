@@ -12,7 +12,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center">
             <Image
-              src="/Mark Logo - Color.png"
+              src="/mark-logo-color.png"
               alt="PDF Searcher logo"
               width={1080}
               height={1080}

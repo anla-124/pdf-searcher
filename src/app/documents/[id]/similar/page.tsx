@@ -5,15 +5,16 @@ import { DashboardLayout } from '@/components/dashboard/layout'
 import { SimilaritySearchForm } from '@/components/similarity/similarity-search-form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import type { Document as AppDocument } from '@/types'
 import { ArrowLeft, FileText, Sparkles, Target, Building, Users, Briefcase, Globe } from 'lucide-react'
 import { formatUploadDate } from '@/lib/date-utils'
-import type { Document as AppDocument } from '@/types'
 import { 
   LAW_FIRM_OPTIONS, 
   FUND_MANAGER_OPTIONS, 
   FUND_ADMIN_OPTIONS, 
   JURISDICTION_OPTIONS
 } from '@/lib/metadata-constants'
+import { SourceDocumentActions } from '@/components/similarity/source-document-actions'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -77,11 +78,8 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
                 <Sparkles className="h-6 w-6 text-blue-500" />
-                Similarity Search
+                General Search
               </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Search documents similar to your selected document
-              </p>
             </div>
           </div>
         </div>
@@ -95,59 +93,57 @@ export default async function SimilarDocumentsPage({ params }: PageProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
-                <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div className="space-y-2 flex-1">
-                <div>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
+                  <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div className="space-y-2">
                   <h3 className="font-semibold text-gray-900 dark:text-white">
                     {document.title}
                   </h3>
-                </div>
-                
-                {/* Basic document info */}
-                <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-                  <span>{formatFileSize(document.file_size)}</span>
-                  <span>{formatUploadDate(document.created_at)}</span>
-                  {document.page_count && (
-                    <span>{document.page_count === 1 ? '1 page' : `${document.page_count} pages`}</span>
-                  )}
-                </div>
-
-                {/* Business metadata - matching document list style */}
-                {(document.metadata?.law_firm || 
-                  document.metadata?.fund_manager || 
-                  document.metadata?.fund_admin || 
-                  document.metadata?.jurisdiction) && (
-                  <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
-                    {document.metadata?.law_firm && (
-                      <div className="flex items-center gap-1">
-                        <Building className="h-3 w-3" />
-                        {resolveOptionLabel(document.metadata?.law_firm, LAW_FIRM_OPTIONS)}
-                      </div>
-                    )}
-                    {document.metadata?.fund_manager && (
-                      <div className="flex items-center gap-1">
-                        <Users className="h-3 w-3" />
-                        {resolveOptionLabel(document.metadata?.fund_manager, FUND_MANAGER_OPTIONS)}
-                      </div>
-                    )}
-                    {document.metadata?.fund_admin && (
-                      <div className="flex items-center gap-1">
-                        <Briefcase className="h-3 w-3" />
-                        {resolveOptionLabel(document.metadata?.fund_admin, FUND_ADMIN_OPTIONS)}
-                      </div>
-                    )}
-                    {document.metadata?.jurisdiction && (
-                      <div className="flex items-center gap-1">
-                        <Globe className="h-3 w-3" />
-                        {resolveOptionLabel(document.metadata?.jurisdiction, JURISDICTION_OPTIONS)}
-                      </div>
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                    <span>{formatFileSize(document.file_size)}</span>
+                    <span>{formatUploadDate(document.created_at)}</span>
+                    {document.page_count && (
+                      <span>{document.page_count === 1 ? '1 page' : `${document.page_count} pages`}</span>
                     )}
                   </div>
-                )}
+
+                  {(document.metadata?.law_firm || 
+                    document.metadata?.fund_manager || 
+                    document.metadata?.fund_admin || 
+                    document.metadata?.jurisdiction) && (
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
+                      {document.metadata?.law_firm && (
+                        <div className="flex items-center gap-1">
+                          <Building className="h-3 w-3" />
+                          {resolveOptionLabel(document.metadata?.law_firm, LAW_FIRM_OPTIONS)}
+                        </div>
+                      )}
+                      {document.metadata?.fund_manager && (
+                        <div className="flex items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {resolveOptionLabel(document.metadata?.fund_manager, FUND_MANAGER_OPTIONS)}
+                        </div>
+                      )}
+                      {document.metadata?.fund_admin && (
+                        <div className="flex items-center gap-1">
+                          <Briefcase className="h-3 w-3" />
+                          {resolveOptionLabel(document.metadata?.fund_admin, FUND_ADMIN_OPTIONS)}
+                        </div>
+                      )}
+                      {document.metadata?.jurisdiction && (
+                        <div className="flex items-center gap-1">
+                          <Globe className="h-3 w-3" />
+                          {resolveOptionLabel(document.metadata?.jurisdiction, JURISDICTION_OPTIONS)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
+              <SourceDocumentActions document={document} />
             </div>
           </CardContent>
         </Card>
