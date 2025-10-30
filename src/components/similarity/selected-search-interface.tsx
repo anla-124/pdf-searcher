@@ -34,7 +34,9 @@ interface SimilarityResult {
   scores: {
     sourceScore: number
     targetScore: number
-    overlapScore: number
+    matchedSourceTokens: number
+    matchedTargetTokens: number
+    lengthRatio?: number | null
   }
   matching_chunks: Array<{ text: string; score: number }>
 }
@@ -121,8 +123,8 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
     const targetDiff = a.scores.targetScore - b.scores.targetScore
     if (Math.abs(targetDiff) > tolerance) return targetDiff
 
-    const overlapDiff = a.scores.overlapScore - b.scores.overlapScore
-    if (Math.abs(overlapDiff) > tolerance) return overlapDiff
+    const matchedTokenDiff = a.scores.matchedTargetTokens - b.scores.matchedTargetTokens
+    if (matchedTokenDiff !== 0) return matchedTokenDiff
 
     const uploadDiff = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
     if (uploadDiff !== 0) return uploadDiff
@@ -145,9 +147,6 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
           break
         case 'target_score':
           comparison = a.scores.targetScore - b.scores.targetScore
-          break
-        case 'overlap_score':
-          comparison = a.scores.overlapScore - b.scores.overlapScore
           break
         case 'source_score':
         default:
@@ -218,7 +217,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-purple-500" />
+            <Sparkles className="h-5 w-5 text-emerald-500" />
                 Selected Search Results
               </CardTitle>
               <CardDescription>
@@ -234,7 +233,6 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
                   <SelectContent>
                     <SelectItem value="source_score">Source Score</SelectItem>
                     <SelectItem value="target_score">Target Score</SelectItem>
-                    <SelectItem value="overlap_score">Overlap</SelectItem>
                     <SelectItem value="upload_time">Upload Time</SelectItem>
                     <SelectItem value="name">Name</SelectItem>
                     <SelectItem value="size">Size</SelectItem>
@@ -257,7 +255,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
           {isComparing ? (
             <div className="flex items-center justify-center p-12">
               <div className="animate-pulse flex flex-col items-center">
-                <Sparkles className="mb-4 h-12 w-12 text-purple-500 animate-spin" />
+                <Sparkles className="mb-4 h-12 w-12 text-emerald-500 animate-spin" />
                 <p className="text-gray-600 dark:text-gray-400">Running selected similarity search...</p>
               </div>
             </div>
@@ -276,7 +274,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
               {sortedResults.map(result => {
                 const sourceScore = result.scores?.sourceScore ?? result.score
                 const targetScore = result.scores?.targetScore ?? 0
-                const overlapScore = result.scores?.overlapScore ?? 0
+                const lengthRatio = result.scores?.lengthRatio ?? null
 
                 return (
                 <Card
@@ -286,8 +284,8 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
                   <div className="flex flex-col gap-3 p-4">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex items-start gap-3">
-                        <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-lg">
-                          <FileText className="h-6 w-6 text-purple-600 dark:text-purple-300" />
+                        <div className="p-3 bg-emerald-100 dark:bg-emerald-900/50 rounded-lg">
+                          <FileText className="h-6 w-6 text-emerald-600 dark:text-emerald-300" />
                         </div>
                         <div className="space-y-2">
                           <div>
@@ -337,9 +335,11 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
                             <Badge variant="outline" className="text-xs">
                               Target: {(targetScore * 100).toFixed(0)}%
                             </Badge>
-                            <Badge variant="outline" className="text-xs">
-                              Overlap: {(overlapScore * 100).toFixed(0)}%
-                            </Badge>
+                            {lengthRatio !== null && Number.isFinite(lengthRatio) && (
+                              <Badge variant="outline" className="text-xs">
+                                Length Ratio: {(lengthRatio / 100).toFixed(2)}
+                              </Badge>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -369,7 +369,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
                           </Button>
                           <Button
                             size="sm"
-                            className="bg-purple-600 hover:bg-purple-700 text-white focus-visible:ring-purple-400"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white focus-visible:ring-emerald-400"
                           >
                             <GitCompare className="h-4 w-4 mr-1 text-white" />
                             Compare with Draftable

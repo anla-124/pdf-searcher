@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { deleteDocumentFromPinecone, updateDocumentMetadataInPinecone } from '@/lib/pinecone'
+import { updateDocumentMetadataInPinecone, getVectorIdsForDocument } from '@/lib/pinecone'
 import { activityLogger } from '@/lib/activity-logger'
 import { DatabaseDocumentWithContent } from '@/types/external-apis'
 import { logger } from '@/lib/logger'
+import { throttling } from '@/lib/concurrency-limiter'
+import { queuePineconeDeletion } from '@/lib/pinecone-cleanup-worker'
 
 export async function GET(
   request: NextRequest,
@@ -67,75 +69,81 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get document to check ownership and get file path FIRST
-    const { data: document, error: fetchError } = await supabase
-      .from('documents')
-      .select('file_path, filename')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single<{ file_path: string | null; filename: string | null }>()
-
-    if (fetchError) {
-      if (fetchError.code === 'PGRST116') {
-        return NextResponse.json({ error: 'Document not found' }, { status: 404 })
-      }
-      return NextResponse.json({ error: 'Failed to fetch document' }, { status: 500 })
-    }
-
-    // Delete from storage
-    const filePath = typeof document?.file_path === 'string' ? document.file_path : null
-    if (filePath) {
-      const { error: storageError } = await supabase.storage
+    return throttling.delete.run(user.id, async () => {
+      // Get document to check ownership and get file path FIRST
+      const { data: document, error: fetchError } = await supabase
         .from('documents')
-        .remove([filePath])
+        .select('file_path, filename')
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .single<{ file_path: string | null; filename: string | null }>()
 
-      if (storageError) {
-        logger.error('Documents API: storage deletion error', storageError)
+      if (fetchError) {
+        if (fetchError.code === 'PGRST116') {
+          return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+        }
+        return NextResponse.json({ error: 'Failed to fetch document' }, { status: 500 })
       }
-    } else {
-      logger.warn('Documents API: document missing file_path during deletion', { documentId: id })
-    }
 
-    // Delete from Pinecone first (before database, in case we need to rollback)
-    try {
-      await deleteDocumentFromPinecone(id)
-      logger.info('Documents API: deleted vectors from Pinecone', { documentId: id })
-    } catch (pineconeError) {
-      logger.error(
-        'Documents API: Pinecone deletion error',
-        pineconeError instanceof Error ? pineconeError : new Error(String(pineconeError)),
-        { documentId: id }
-      )
-      // Continue with deletion even if Pinecone fails - we'll clean up stale vectors later
-    }
+      let vectorIds: string[] = []
+      try {
+        vectorIds = await getVectorIdsForDocument(id)
+        logger.debug('Documents API: prefetched Pinecone vector IDs for deletion', {
+          documentId: id,
+          vectorCount: vectorIds.length,
+        })
+      } catch (vectorError) {
+        logger.error('Documents API: failed to prefetch vector IDs', vectorError instanceof Error ? vectorError : new Error(String(vectorError)), {
+          documentId: id,
+        })
+      }
 
-    // Delete from database (CASCADE will handle related records)
-    const { error: deleteError } = await supabase
-      .from('documents')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', user.id)
+      // Delete from storage
+      const filePath = typeof document?.file_path === 'string' ? document.file_path : null
+      if (filePath) {
+        const { error: storageError } = await supabase.storage
+          .from('documents')
+          .remove([filePath])
 
-    if (deleteError) {
-      logger.error('Documents API: database deletion error', deleteError)
-      return NextResponse.json({ error: 'Failed to delete document' }, { status: 500 })
-    }
+        if (storageError) {
+          logger.error('Documents API: storage deletion error', storageError)
+        }
+      } else {
+        logger.warn('Documents API: document missing file_path during deletion', { documentId: id })
+      }
 
-    // Log activity
-    await activityLogger.logActivity({
-      userId: user.id,
-      userEmail: user.email || '',
-      action: 'delete',
-      resourceType: 'document',
-      resourceId: id,
-      resourceName: typeof document?.filename === 'string' ? document.filename : 'Unknown',
-      endpoint: `/api/documents/${id}`,
-      method: 'DELETE',
-      statusCode: 200
-    }, request)
+      // Queue Pinecone cleanup with retry/backoff
+      queuePineconeDeletion(id, vectorIds)
+      logger.info('Documents API: queued Pinecone vector cleanup', { documentId: id })
 
-    logger.info('Documents API: document deleted successfully', { documentId: id })
-    return NextResponse.json({ message: 'Document deleted successfully' })
+      // Delete from database (CASCADE will handle related records)
+      const { error: deleteError } = await supabase
+        .from('documents')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id)
+
+      if (deleteError) {
+        logger.error('Documents API: database deletion error', deleteError)
+        return NextResponse.json({ error: 'Failed to delete document' }, { status: 500 })
+      }
+
+      // Log activity
+      await activityLogger.logActivity({
+        userId: user.id,
+        userEmail: user.email || '',
+        action: 'delete',
+        resourceType: 'document',
+        resourceId: id,
+        resourceName: typeof document?.filename === 'string' ? document.filename : 'Unknown',
+        endpoint: `/api/documents/${id}`,
+        method: 'DELETE',
+        statusCode: 200
+      }, request)
+
+      logger.info('Documents API: document deleted successfully', { documentId: id })
+      return NextResponse.json({ message: 'Document deleted successfully' })
+    })
 
   } catch (error) {
     logger.error('Documents API: document deletion error', error instanceof Error ? error : new Error(String(error)))

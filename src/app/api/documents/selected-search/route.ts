@@ -8,6 +8,14 @@ import { createClient } from '@/lib/supabase/server'
 import { executeSimilaritySearch, validateDocumentForSimilarity } from '@/lib/similarity/orchestrator'
 import { logger } from '@/lib/logger'
 
+const parsePositiveInteger = (value: string | undefined): number | undefined => {
+  if (!value) return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+const STAGE2_WORKERS_FALLBACK = parsePositiveInteger(process.env['SIMILARITY_STAGE2_WORKERS'])
+
 interface SimilarityResult {
   document: {
     id: string
@@ -22,12 +30,15 @@ interface SimilarityResult {
     created_at: string
     updated_at: string
     metadata?: Record<string, unknown>
+    total_tokens?: number
   }
   score: number
   scores: {
     sourceScore: number
     targetScore: number
-    overlapScore: number
+    matchedSourceTokens: number
+    matchedTargetTokens: number
+    lengthRatio: number | null
   }
   matching_chunks: Array<{ text: string; score: number }>
 }
@@ -64,7 +75,7 @@ export async function POST(request: NextRequest) {
     // Verify source document exists and belongs to user
     const { data: sourceDocument, error: sourceError } = await supabase
       .from('documents')
-      .select('id, title, status, centroid_embedding, effective_chunk_count')
+      .select('id, title, status, centroid_embedding, effective_chunk_count, total_tokens')
       .eq('id', sourceDocumentId)
       .eq('user_id', user.id)
       .single()
@@ -82,6 +93,10 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
+    const sourceTotalTokens = typeof sourceDocument.total_tokens === 'number' && Number.isFinite(sourceDocument.total_tokens)
+      ? sourceDocument.total_tokens
+      : null
+
     // Validate source document has required fields for similarity search
     const validation = await validateDocumentForSimilarity(sourceDocumentId)
     if (!validation.valid) {
@@ -95,7 +110,7 @@ export async function POST(request: NextRequest) {
     // Verify all target documents exist and belong to user
     const { data: targetDocuments, error: targetError } = await supabase
       .from('documents')
-      .select('id, title, filename, file_size, file_path, content_type, status, page_count, created_at, updated_at, metadata')
+      .select('id, title, filename, file_size, file_path, content_type, status, page_count, created_at, updated_at, metadata, total_tokens')
       .in('id', targetDocumentIds)
       .eq('user_id', user.id)
 
@@ -121,7 +136,8 @@ export async function POST(request: NextRequest) {
       },
       stage1_topK: 250,
       stage1_enabled: true,
-      stage2_fallbackThreshold: 0.8
+      stage2_fallbackThreshold: 0.8,
+      stage2_parallelWorkers: STAGE2_WORKERS_FALLBACK
     })
 
     logger.info('Selected search completed', {
@@ -134,6 +150,17 @@ export async function POST(request: NextRequest) {
     // Format results to match expected interface
     const formattedResults: SimilarityResult[] = searchResult.results.map(result => {
       const targetDoc = targetDocuments.find(doc => doc.id === result.document.id)
+      const targetTotalTokensFromResult = typeof result.document.total_tokens === 'number' && Number.isFinite(result.document.total_tokens)
+        ? result.document.total_tokens
+        : null
+      const targetTotalTokensFromDb = typeof targetDoc?.total_tokens === 'number' && Number.isFinite(targetDoc.total_tokens as number)
+        ? (targetDoc?.total_tokens as number)
+        : null
+      const targetTotalTokens = targetTotalTokensFromResult ?? targetTotalTokensFromDb
+
+      const lengthRatio = sourceTotalTokens && targetTotalTokens
+        ? (sourceTotalTokens / targetTotalTokens) * 100
+        : null
 
       return {
         document: {
@@ -148,13 +175,16 @@ export async function POST(request: NextRequest) {
           page_count: result.document.page_count,
           created_at: (targetDoc?.created_at as string) || new Date().toISOString(),
           updated_at: (targetDoc?.updated_at as string) || new Date().toISOString(),
-          metadata: targetDoc?.metadata as Record<string, unknown> | undefined
+          metadata: targetDoc?.metadata as Record<string, unknown> | undefined,
+          total_tokens: targetTotalTokens ?? undefined
         },
         score: result.scores.sourceScore,
         scores: {
           sourceScore: result.scores.sourceScore,
           targetScore: result.scores.targetScore,
-          overlapScore: result.scores.overlapScore
+          matchedSourceTokens: result.scores.matchedSourceTokens,
+          matchedTargetTokens: result.scores.matchedTargetTokens,
+          lengthRatio
         },
         matching_chunks: result.sections.map(section => ({
           text: `Pages ${section.docB_pageRange} (${section.chunkCount} chunks, avg score: ${(section.avgScore * 100).toFixed(1)}%)`,
@@ -168,6 +198,12 @@ export async function POST(request: NextRequest) {
     const missingDocs = targetDocuments.filter(doc => !resultsDocIds.has(doc.id as string))
 
     for (const doc of missingDocs) {
+      const missingTargetTokens = typeof doc.total_tokens === 'number' && Number.isFinite(doc.total_tokens)
+        ? doc.total_tokens
+        : null
+      const lengthRatio = sourceTotalTokens && missingTargetTokens
+        ? (sourceTotalTokens / missingTargetTokens) * 100
+        : null
       formattedResults.push({
         document: {
           id: doc.id as string,
@@ -181,13 +217,16 @@ export async function POST(request: NextRequest) {
           page_count: doc.page_count as number | undefined,
           created_at: doc.created_at as string,
           updated_at: doc.updated_at as string,
-          metadata: doc.metadata as Record<string, unknown> | undefined
+          metadata: doc.metadata as Record<string, unknown> | undefined,
+          total_tokens: missingTargetTokens ?? undefined
         },
         score: 0,
         scores: {
           sourceScore: 0,
           targetScore: 0,
-          overlapScore: 0
+          matchedSourceTokens: 0,
+          matchedTargetTokens: 0,
+          lengthRatio
         },
         matching_chunks: []
       })

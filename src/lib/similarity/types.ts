@@ -28,10 +28,11 @@ export interface SectionMatch {
 }
 
 export interface SimilarityScores {
-  sourceScore: number        // Portion of source document matched (directional coverage)
-  targetScore: number        // Portion of target document matched (directional coverage)
-  overlapScore: number       // Token-weighted overlap across both documents
-  explanation: string        // User-facing explanation
+  sourceScore: number              // Portion of source document matched (directional coverage)
+  targetScore: number              // Portion of target document matched (directional coverage)
+  matchedSourceTokens: number      // Absolute matched token count from source
+  matchedTargetTokens: number      // Absolute matched token count from target
+  explanation: string              // User-facing explanation
 }
 
 export interface SimilarityDocument {

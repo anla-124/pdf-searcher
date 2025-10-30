@@ -14,8 +14,8 @@ yarn-error.log*
 *.env
 *.env.*
 !.env.example
-!.env.local.template
-!.env.docker.example
+!.env.free.template
+!.env.paid.template
 
 # Google Cloud credentials (CRITICAL - Contains service account keys)
 credentials/

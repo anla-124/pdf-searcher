@@ -132,9 +132,9 @@ export async function stage2FinalScoring(
       if (Math.abs(a.scores.targetScore - b.scores.targetScore) > 0.01) {
         return b.scores.targetScore - a.scores.targetScore
       }
-      // 3. Tie-break by overlap score (mutual similarity)
-      if (Math.abs(a.scores.overlapScore - b.scores.overlapScore) > 0.01) {
-        return b.scores.overlapScore - a.scores.overlapScore
+      // 3. Tie-break by matched target tokens (higher reuse)
+      if (a.scores.matchedTargetTokens !== b.scores.matchedTargetTokens) {
+        return b.scores.matchedTargetTokens - a.scores.matchedTargetTokens
       }
       // 4. Final tie-break: More matched chunks
       return b.matchedChunks - a.matchedChunks
@@ -323,7 +323,8 @@ async function processCandidate(
     candidateId,
     sourceScore: scores.sourceScore,
     targetScore: scores.targetScore,
-    overlapScore: scores.overlapScore,
+    matchedSourceTokens: scores.matchedSourceTokens,
+    matchedTargetTokens: scores.matchedTargetTokens,
     matchedChunks: matches.length
   })
 

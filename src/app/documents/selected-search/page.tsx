@@ -104,7 +104,7 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
             <div className="h-6 border-l border-gray-300 dark:border-gray-600" />
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <Users className="h-6 w-6 text-purple-500" />
+                <Users className="h-6 w-6 text-emerald-500" />
                 Selected Search
               </h1>
             </div>
@@ -113,9 +113,9 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
 
         {/* Source Document Card */}
         {sourceDocument && (
-          <Card className="border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20">
+          <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-purple-900 dark:text-purple-100">
+              <CardTitle className="flex items-center gap-2 text-emerald-900 dark:text-emerald-100">
                 <Target className="h-5 w-5" />
                 Source Document
               </CardTitle>
@@ -123,8 +123,8 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
             <CardContent>
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex items-start gap-4">
-                  <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-lg">
-                    <FileText className="h-6 w-6 text-purple-600 dark:text-purple-300" />
+                  <div className="p-3 bg-emerald-100 dark:bg-emerald-900/50 rounded-lg">
+                    <FileText className="h-6 w-6 text-emerald-600 dark:text-emerald-300" />
                   </div>
                   <div className="space-y-2">
                     <h3 className="font-semibold text-gray-900 dark:text-white">
@@ -171,7 +171,7 @@ export default async function SelectedSearchPage({ searchParams }: PageProps) {
                     )}
                   </div>
                 </div>
-                <SourceDocumentActions document={sourceDocument} accent="purple" />
+                <SourceDocumentActions document={sourceDocument} accent="emerald" />
               </div>
             </CardContent>
           </Card>

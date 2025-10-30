@@ -28,6 +28,7 @@ if (!fs.existsSync(standaloneDir)) {
 
 copyDir(path.join(projectRoot, 'public'), path.join(standaloneDir, 'public'))
 copyDir(path.join(projectRoot, '.next', 'static'), path.join(standaloneDir, '.next', 'static'))
+copyDir(path.join(projectRoot, 'credentials'), path.join(standaloneDir, 'credentials'))
 copyFile(path.join(projectRoot, '.env'), path.join(standaloneDir, '.env'))
 copyFile(path.join(projectRoot, '.env.local'), path.join(standaloneDir, '.env.local'))
 copyFile(path.join(projectRoot, '.env.production'), path.join(standaloneDir, '.env.production'))

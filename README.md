@@ -35,10 +35,32 @@ A web application for processing PDF documents and performing similarity searche
     ```
 3.  Set up your environment variables by copying the example file:
     ```bash
-    cp .env.local.template .env.local
+    # For Supabase/Pinecone free plans
+    cp .env.free.template .env.local
+
+    # For paid tiers
+    # cp .env.paid.template .env.local
     ```
 4.  Fill in the required environment variables in `.env.local`.
 5.  Set up the database by running the `MASTER-DATABASE-SETUP.sql` script in your Supabase SQL Editor.
+
+### Environment Profiles
+
+Two environment templates ship with the project:
+
+- `.env.free.template`: tuned for the Supabase and Pinecone free tiers with conservative connection-pool and throttling limits.
+- `.env.paid.template`: starting point for paid tiers—raise the limits further once you confirm the service quotas.
+
+Copy the template that matches your target environment to `.env.local`, then populate the credential placeholders.
+
+## Operational Guardrails
+
+- **Request throttling:** Uploads and deletes are limited by `UPLOAD_*` and `DELETE_*` environment variables. Free-tier defaults allow two concurrent operations globally and per user; paid tiers start at five.
+- **Document AI queue:** Free-tier deployments process one document at a time (`MAX_CONCURRENT_DOCUMENTS=1`) so long PDFs stay within Supabase connection limits.
+- **Pinecone cleanup worker:** Document deletions enqueue background vector cleanup with exponential backoff. Tune `PINECONE_DELETE_MAX_RETRIES` and `PINECONE_DELETE_BACKOFF_MS` as needed.
+- **Health monitoring:** `GET /api/health/pool` reports Supabase pool metrics, throttling state, and Pinecone cleanup queue depth so you can keep an eye on resource pressure.
+- **Similarity worker cap:** `SIMILARITY_STAGE2_WORKERS` controls how many Stage 2 scoring jobs can run in parallel (defaults to 1 for free tier); raise it alongside Supabase pool limits on higher plans.
+- **Directional reuse metrics:** Stage 2 now reports `sourceScore` / `targetScore` as the percentage of each document whose content appears in the other (duplicate tokens in the target are counted, so reusable content is explicit).
 
 ### Running the Development Server
 

@@ -274,17 +274,16 @@ function mergeBidirectionalMatches(
 
 function greedySelectPairs(pairs: ChunkMatch[]): ChunkMatch[] {
   const sorted = [...pairs].sort((a, b) => b.score - a.score)
-  const usedChunkA = new Set<string>()
-  const usedChunkB = new Set<string>()
+  const seenPairs = new Set<string>()
   const result: ChunkMatch[] = []
 
   for (const pair of sorted) {
-    if (usedChunkA.has(pair.chunkA.id) || usedChunkB.has(pair.chunkB.id)) {
+    const key = `${pair.chunkA.id}->${pair.chunkB.id}`
+    if (seenPairs.has(key)) {
       continue
     }
     result.push(pair)
-    usedChunkA.add(pair.chunkA.id)
-    usedChunkB.add(pair.chunkB.id)
+    seenPairs.add(key)
   }
 
   return result

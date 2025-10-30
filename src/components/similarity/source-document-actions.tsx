@@ -7,7 +7,7 @@ import type { Document as AppDocument } from '@/types'
 
 interface SourceDocumentActionsProps {
   document: AppDocument
-  accent?: 'blue' | 'purple'
+  accent?: 'blue' | 'emerald'
 }
 
 const openInNewTab = async (doc: AppDocument) => {
@@ -56,9 +56,9 @@ const ACCENT_STYLES = {
     button: 'focus-visible:ring-blue-400',
     icon: 'text-blue-500'
   },
-  purple: {
-    button: 'focus-visible:ring-purple-400',
-    icon: 'text-purple-500'
+  emerald: {
+    button: 'focus-visible:ring-emerald-400',
+    icon: 'text-emerald-500'
   }
 } as const
 

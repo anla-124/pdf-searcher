@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -178,18 +178,73 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
     handleFileSelect(e.dataTransfer.files)
   }, [handleFileSelect])
 
+  const [uploadConcurrency, setUploadConcurrency] = useState<number>(2)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let isMounted = true
+
+    const hydrateConcurrency = async () => {
+      try {
+        const response = await fetch('/api/health/pool', {
+          method: 'GET',
+          headers: {
+            'cache-control': 'no-cache'
+          },
+          signal: controller.signal
+        })
+
+        if (!response.ok) {
+          return
+        }
+
+        const data = await response.json()
+        const globalLimit = data?.throttling?.upload?.global?.limit
+        const perUserLimit = data?.throttling?.upload?.perUser?.limit
+
+        const toFiniteNumber = (value: unknown) => {
+          const numberValue = typeof value === 'number' ? value : Number(value)
+          return Number.isFinite(numberValue) && numberValue > 0 ? Math.floor(numberValue) : null
+        }
+
+        const parsedGlobal = toFiniteNumber(globalLimit)
+        const parsedPerUser = toFiniteNumber(perUserLimit)
+
+        const effectiveLimitCandidates = [
+          parsedGlobal ?? Number.POSITIVE_INFINITY,
+          parsedPerUser ?? Number.POSITIVE_INFINITY
+        ]
+
+        const effectiveLimit = Math.min(...effectiveLimitCandidates)
+
+        if (isMounted && Number.isFinite(effectiveLimit) && effectiveLimit > 0) {
+          setUploadConcurrency(Math.max(1, effectiveLimit))
+        }
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') {
+          return
+        }
+        // Non-fatal: fall back to default concurrency
+      }
+    }
+
+    void hydrateConcurrency()
+
+    return () => {
+      isMounted = false
+      controller.abort()
+    }
+  }, [])
+
   const uploadFiles = async () => {
     const pendingFiles = files.filter(f => f.status === 'pending')
     
-    // Parallel upload processing with concurrency limit
-    const CONCURRENCY_LIMIT = 3 // Process up to 3 files simultaneously
-    const uploadPromises: Promise<void>[] = []
-    
+    // Parallel upload processing, aligned with backend throttling limits
+    const CONCURRENCY_LIMIT = Math.max(1, uploadConcurrency)
     for (let i = 0; i < pendingFiles.length; i += CONCURRENCY_LIMIT) {
       const batch = pendingFiles.slice(i, i + CONCURRENCY_LIMIT)
       
       const batchPromises = batch.map(uploadFile => uploadSingleFile(uploadFile))
-      uploadPromises.push(...batchPromises)
       
       // Wait for current batch to complete before starting next batch
       await Promise.allSettled(batchPromises)
@@ -313,8 +368,7 @@ const updateRangeMetadata = (
       metadata: updatedMetadata,
       touchedFields: {
         ...f.touchedFields,
-        [field]: true,
-        subscription_agreement_skipped: true
+        [field]: true
       }
     }
   }))

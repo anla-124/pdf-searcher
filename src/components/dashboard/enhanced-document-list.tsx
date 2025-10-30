@@ -1009,7 +1009,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                 <Button
                   size="sm"
                   variant="default"
-                  className="bg-purple-600 hover:bg-purple-700 focus-visible:ring-purple-400"
+                  className="bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400"
                   disabled={selectedDocuments.size < 2}
                   onClick={() => {
                     const ids = Array.from(selectedDocuments)
@@ -1322,7 +1322,7 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                       className={`group hover:shadow-md transition-all duration-200 ${
                         isSelectMode && selectedDocuments.has(document.id) ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-950/20' : ''
                       } ${
-                        _selectedSearchSourceDocument?.id === document.id ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-950/20' : ''
+                        _selectedSearchSourceDocument?.id === document.id ? 'ring-2 ring-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' : ''
                       }`} 
                       role="article" 
                       aria-labelledby={`document-title-${document.id}`}
@@ -1349,8 +1349,8 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                             )}
                             {isSelectMode && sourceForSelectionId === document.id && (
                               <div className="flex items-center gap-1 pl-1">
-                                <Target className="h-4 w-4 text-purple-600" />
-                                <span className="text-xs font-medium text-purple-600">Source</span>
+                                <Target className="h-4 w-4 text-emerald-600" />
+                                <span className="text-xs font-medium text-emerald-600">Source</span>
                               </div>
                             )}
                             <div className="p-2 bg-blue-50 dark:bg-gradient-to-br dark:from-blue-900/60 dark:to-blue-800/40 rounded-lg border dark:border-blue-700/30" aria-hidden="true">

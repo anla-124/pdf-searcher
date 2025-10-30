@@ -64,6 +64,10 @@ export const getPoolMetrics = () => {
   return connectionPool.getMetrics()
 }
 
+export const getPoolConfig = () => {
+  return connectionPool.getConfig()
+}
+
 /**
  * Health check for the connection pool.
  */

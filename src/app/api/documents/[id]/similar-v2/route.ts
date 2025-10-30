@@ -13,6 +13,14 @@ type RawFilters = Record<string, unknown>
 const PINECONE_OPERATOR_IN = '$in'
 const PINECONE_OPERATOR_EQ = '$eq'
 
+const parsePositiveInteger = (value: string | undefined): number | undefined => {
+  if (!value) return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+const STAGE2_WORKERS_FALLBACK = parsePositiveInteger(process.env['SIMILARITY_STAGE2_WORKERS'])
+
 function normalizeFilterEntry(value: unknown): { pinecone: unknown; client: unknown } | null {
   if (value === null || value === undefined) {
     return null
@@ -193,7 +201,7 @@ export async function POST(
       stage1_topK = 250,
       stage1_enabled = true,
       stage1_neighborsPerChunk,
-      stage2_parallelWorkers,
+      stage2_parallelWorkers = STAGE2_WORKERS_FALLBACK,
       stage2_fallbackThreshold = 0.8,
       filters: rawFilters = {},
       source_min_score = 0.7,
@@ -221,10 +229,15 @@ export async function POST(
 
     const { pineconeFilters, appliedFilters } = buildStage0Filters(metadataFilters, user.id)
 
+    const normalizedStage2Workers =
+      stage2_parallelWorkers !== undefined
+        ? Math.max(1, Math.floor(stage2_parallelWorkers))
+        : undefined
+
     // Verify document exists and belongs to user
     const { data: document, error: docError } = await supabase
       .from('documents')
-      .select('id, title, status, centroid_embedding, effective_chunk_count, page_count')
+      .select('id, title, status, centroid_embedding, effective_chunk_count, page_count, total_tokens')
       .eq('id', id)
       .eq('user_id', user.id)
       .single()
@@ -289,15 +302,41 @@ export async function POST(
       stage1_topK,
       stage1_enabled,
       stage1_neighborsPerChunk,
-      stage2_parallelWorkers,
+      stage2_parallelWorkers: normalizedStage2Workers,
       stage2_fallbackThreshold,
       sourcePageRange: sanitizedPageRange
     })
+
+    const sourceTotalTokens = typeof document.total_tokens === 'number' && Number.isFinite(document.total_tokens)
+      ? document.total_tokens
+      : null
 
     const filteredResults = searchResult.results.filter(result =>
       result.scores.sourceScore >= source_min_score &&
       result.scores.targetScore >= target_min_score
     )
+
+    const enrichedResults = filteredResults.map(result => {
+      const targetTotalTokensFromResult = typeof result.document.total_tokens === 'number' && Number.isFinite(result.document.total_tokens as number)
+        ? (result.document.total_tokens as number)
+        : null
+      const targetTotalTokensFromEffective = typeof result.document.effective_chunk_count === 'number' && Number.isFinite(result.document.effective_chunk_count as number)
+        ? (result.document.effective_chunk_count as number)
+        : null
+      const targetTotalTokens = targetTotalTokensFromResult ?? targetTotalTokensFromEffective
+
+      const lengthRatio = sourceTotalTokens && targetTotalTokens
+        ? (sourceTotalTokens / targetTotalTokens) * 100
+        : null
+
+      return {
+        ...result,
+        scores: {
+          ...result.scores,
+          lengthRatio
+        }
+      }
+    })
 
     logger.info('Similarity search completed', {
       documentId: id,
@@ -317,8 +356,8 @@ export async function POST(
     const response = {
       document_id: id,
       document_title: document.title,
-      results: filteredResults,
-      total_results: filteredResults.length,
+      results: enrichedResults,
+      total_results: enrichedResults.length,
       timing: {
         stage0_ms: searchResult.timing.stage0_ms,
         stage1_ms: searchResult.timing.stage1_ms,
@@ -335,7 +374,7 @@ export async function POST(
         stage1_topK,
         stage1_enabled,
         stage1_neighborsPerChunk,
-        stage2_parallelWorkers,
+        stage2_parallelWorkers: normalizedStage2Workers,
         stage2_fallbackThreshold,
         filters: {
           ...appliedFilters,
@@ -396,7 +435,7 @@ export async function GET(
     // Verify document belongs to user
     const { data: document, error: docError } = await supabase
       .from('documents')
-      .select('id, title, status')
+      .select('id, title, status, total_tokens')
       .eq('id', id)
       .eq('user_id', user.id)
       .single()

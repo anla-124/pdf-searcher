@@ -44,10 +44,10 @@ export function SearchModeModal({ isOpen, onClose, documentId, documentTitle: _d
           {/* Selected Search */}
           <Button 
             variant="outline" 
-            className="w-full h-12 flex items-center justify-center gap-2 hover:bg-purple-50 hover:border-purple-300"
+            className="w-full h-12 flex items-center justify-center gap-2 hover:bg-emerald-50 hover:border-emerald-300"
             onClick={handleSelectedSearchClick}
           >
-            <Users className="h-4 w-4 text-purple-500" />
+            <Users className="h-4 w-4 text-emerald-500" />
             Selected Search
           </Button>
         </div>

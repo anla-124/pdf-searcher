@@ -3,7 +3,7 @@ import { PDFDocument } from 'pdf-lib'
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { generateEmbeddings } from '@/lib/embeddings-vertex'
-import { indexDocumentInPinecone } from '@/lib/pinecone'
+import { indexDocumentInPinecone, getVectorIdsForDocument } from '@/lib/pinecone'
 import { l2Normalize } from '@/lib/similarity/utils/vector-operations'
 import { detectOptimalProcessor, getProcessorId, getProcessorName } from '@/lib/document-ai-config'
 import { getGoogleClientOptions } from '@/lib/google-credentials'
@@ -16,6 +16,7 @@ import { chunkByParagraphs, countTokens, type Paragraph } from '@/lib/chunking/p
 import { chunkBySentences } from '@/lib/chunking/sentence-chunker'
 import type { GenericSupabaseSchema } from '@/types/supabase'
 import { saveDocumentAIResponse } from '@/lib/debug-document-ai'
+import { queuePineconeDeletion } from '@/lib/pinecone-cleanup-worker'
 
 // Processing pipeline fingerprint - increment when major changes are made
 const PROCESSING_PIPELINE_VERSION = '4.5.0' // FIX: Simple greedy chunking algorithm - zero overlap, strict token limits
@@ -90,6 +91,7 @@ interface ProcessedDocumentData {
   structuredData: ReturnType<typeof extractStructuredFields>
   pageCount: number
   pagesText: { text: string; pageNumber: number }[]
+  paragraphs: Paragraph[]
 }
 
 interface SaveProcessedDocumentResult {
@@ -464,6 +466,40 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           },
         }
 
+        const syncPageLimit = Number.parseInt(process.env['DOCUMENT_AI_SYNC_PAGE_LIMIT'] || '15', 10)
+        const shouldUseSyncFirst = sizeAnalysis.estimatedPages <= syncPageLimit
+
+        if (!shouldUseSyncFirst) {
+          logger.info('Skipping sync-first Document AI processing due to page count', {
+            documentId,
+            estimatedPages: sizeAnalysis.estimatedPages,
+            syncPageLimit
+          })
+
+          try {
+            return await processDocumentWithChunks({
+              pdfArrayBuffer: arrayBuffer,
+              processorId,
+              processorName: name,
+              processorType: optimalProcessor,
+              documentId,
+              client,
+              supabase,
+              document,
+              sizeAnalysis,
+              timeEstimate
+            })
+          } catch (chunkError) {
+            if (chunkError instanceof ProcessingCancelledException) {
+              throw chunkError
+            }
+
+            await cleanupPartialEmbeddings(documentId)
+            logger.error('Chunked processing fallback failed - document too large', chunkError as Error, { documentId })
+            throw new Error('Document exceeds processing limits. Please try a smaller document.')
+          }
+        }
+
         let result;
         try {
           // Use smart retry with circuit breaker for Document AI processing
@@ -520,94 +556,31 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
             typeof documentAiError.details === 'string' &&
             documentAiError.details.includes('exceed the limit')
           ) {
-        logger.warn('Page limit exceeded, attempting chunked processing fallback', {
-          documentId,
-          errorCode: documentAiError.code !== undefined ? String(documentAiError.code) : undefined,
-          errorDetails: documentAiError.details
-        })
+            logger.warn('Page limit exceeded, attempting chunked processing fallback', {
+              documentId,
+              errorCode: documentAiError.code !== undefined ? String(documentAiError.code) : undefined,
+              errorDetails: documentAiError.details
+            })
 
             try {
-              const chunkedData = await processDocumentInChunks(
-                arrayBuffer,
+              return await processDocumentWithChunks({
+                pdfArrayBuffer: arrayBuffer,
                 processorId,
-                name,
-                optimalProcessor,
+                processorName: name,
+                processorType: optimalProcessor,
                 documentId,
-                client
-              )
-
-              // CHECKPOINT: Check cancellation before chunked embedding generation
-              if (await checkCancellation(documentId)) {
-                logger.info('Document cancelled before chunked embedding generation', { documentId })
-                throw new ProcessingCancelledException(documentId)
-              }
-
-              await updateProcessingStatus(documentId, 'processing', 60, 'Extracting structured data from chunks...')
-              await updateProcessingStatus(documentId, 'processing', 80, 'Generating embeddings from chunks...')
-              logger.logDocumentProcessing('embedding-generation', documentId, 'started', { progress: 80 })
-
-              const { embeddingStats, excludedSection } = await saveProcessedDocumentData(
+                client,
                 supabase,
-                documentId,
-                chunkedData,
                 document,
                 sizeAnalysis,
-                null  // Chunked processing doesn't have a single Document AI document
-              )
-
-              await updateProcessingStatus(documentId, 'completed', 100, 'Document processing completed successfully')
-              logger.logDocumentProcessing('embedding-generation', documentId, 'completed', { progress: 100 })
-
-              await supabase
-                .from('documents')
-                .update({
-                  status: 'completed',
-                  processing_error: null,
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', documentId)
-
-              logger.logDocumentProcessing('completion', documentId, 'completed')
-              await invalidateDocumentCaches(documentId, document.user_id)
-
-              const metrics: DocumentProcessingMetrics = {
-                sizeAnalysis,
-                pageCount: chunkedData.pageCount,
-                chunkCount: embeddingStats.chunkCount,
-                embeddingsAttempts: embeddingStats.attempts,
-                embeddingsRetries: embeddingStats.retryCount,
-                structuredFieldCount: chunkedData.structuredData.fields?.length || 0,
-                textLength: chunkedData.extractedText.length,
-                processor: {
-                  id: processorId,
-                  name,
-                  type: `${optimalProcessor}-chunked`
-                },
-                estimatedProcessingSeconds: timeEstimate.estimatedMinutes * 60
-              }
-
-              if (excludedSection) {
-                metrics.excludedSections = [{
-                  type: excludedSection.type,
-                  startPage: excludedSection.startPage,
-                  endPage: excludedSection.endPage,
-                  pageCount: excludedSection.pageCount
-                }]
-              }
-
-              logger.info('Chunked processing completed successfully', {
-                documentId,
-                chunksProcessed: metrics.chunkCount,
-                totalPages: metrics.pageCount
+                timeEstimate
               })
-
-              return { switchedToBatch: false, metrics }
             } catch (chunkError) {
-              // Re-throw cancellation exceptions - don't try batch processing for cancelled documents
               if (chunkError instanceof ProcessingCancelledException) {
                 throw chunkError
               }
 
+              await cleanupPartialEmbeddings(documentId)
               logger.error('Chunked processing fallback failed - document too large', chunkError as Error, { documentId })
               throw new Error('Document exceeds processing limits. Please try a smaller document.')
             }
@@ -722,6 +695,8 @@ export async function processDocument(documentId: string): Promise<ProcessDocume
           component: 'document-processing',
           operation: 'processDocument'
         })
+
+        await cleanupPartialEmbeddings(documentId)
 
         // Update document and processing status with error
         await supabase
@@ -954,8 +929,9 @@ export async function generateAndIndexPagedEmbeddings(
     const filename = typeof docRecord?.filename === 'string' ? docRecord.filename : `${documentId}.pdf`
     const userId = typeof docRecord?.user_id === 'string' ? docRecord.user_id : null
     const pagesText = extractTextByPages(document)
-
-    return await generateEmbeddingsFromPages(documentId, pagesText, businessMetadata, filename, userId, sizeAnalysis, document)
+    const paragraphs = extractParagraphsFromDocument(document)
+  
+    return await generateEmbeddingsFromPages(documentId, pagesText, businessMetadata, filename, userId, sizeAnalysis, document, paragraphs)
   } finally {
     releaseServiceClient(supabase)
   }
@@ -1175,6 +1151,30 @@ async function saveProcessedDocumentData(
   const { filteredPages, exclusion } = applyManualExclusions(processedData.pagesText, manualRange)
   const pagesForEmbedding = filteredPages.length > 0 ? filteredPages : processedData.pagesText
 
+  const normalizedAllParagraphs = processedData.paragraphs.map((paragraph, index) => ({
+    ...paragraph,
+    index
+  }))
+
+  let paragraphsForEmbedding = normalizedAllParagraphs
+
+  if (exclusion && exclusion.pageNumbers?.length) {
+    const excludedPages = new Set<number>(exclusion.pageNumbers)
+    const filteredParagraphs = normalizedAllParagraphs.filter(paragraph => !excludedPages.has(paragraph.pageNumber))
+
+    if (filteredParagraphs.length > 0) {
+      paragraphsForEmbedding = filteredParagraphs.map((paragraph, index) => ({
+        ...paragraph,
+        index
+      }))
+    } else {
+      logger.warn('Paragraph filtering removed all content; falling back to full document paragraphs', {
+        documentId,
+        excludedPages: Array.from(excludedPages)
+      })
+    }
+  }
+
   if (exclusion) {
     logger.info('Applying manual subscription agreement exclusion', {
       documentId,
@@ -1292,7 +1292,8 @@ async function saveProcessedDocumentData(
     documentAIResponse || null,
     documentRecord as unknown as DatabaseDocument,
     sizeAnalysis,
-    pagesForEmbedding
+    pagesForEmbedding,
+    paragraphsForEmbedding
   )
 
   return {
@@ -1327,6 +1328,7 @@ async function processDocumentInChunks(
   const aggregatedEntities: SimplifiedEntity[] = []
   const aggregatedTables: SimplifiedTable[] = []
   const aggregatedPagesText: { text: string; pageNumber: number }[] = []
+  const aggregatedParagraphs: Paragraph[] = []
   let totalPageCount = 0
 
   for (let start = 0; start < totalPages; start += maxPagesPerChunk) {
@@ -1412,8 +1414,14 @@ async function processDocumentInChunks(
     aggregatedEntities.push(...(chunkData.structuredData.entities || []))
     aggregatedTables.push(...(chunkData.structuredData.tables || []))
     aggregatedPagesText.push(...chunkData.pagesText)
+    aggregatedParagraphs.push(...chunkData.paragraphs)
     totalPageCount += chunkData.pageCount
   }
+
+  const normalizedParagraphs = aggregatedParagraphs.map((paragraph, index) => ({
+    ...paragraph,
+    index
+  }))
 
   return {
     extractedText: aggregatedTextParts.join('\n'),
@@ -1423,7 +1431,140 @@ async function processDocumentInChunks(
       tables: aggregatedTables
     },
     pageCount: totalPageCount,
-    pagesText: aggregatedPagesText
+    pagesText: aggregatedPagesText,
+    paragraphs: normalizedParagraphs
+  }
+}
+
+interface ChunkProcessingParams {
+  pdfArrayBuffer: ArrayBuffer
+  processorId: string
+  processorName: string
+  processorType: string
+  documentId: string
+  client: DocumentProcessorServiceClient
+  supabase: SupabaseClient
+  document: DatabaseDocumentWithContent
+  sizeAnalysis: DocumentSizeAnalysis
+  timeEstimate: ReturnType<typeof estimateProcessingTime>
+}
+
+async function processDocumentWithChunks(params: ChunkProcessingParams) {
+  const {
+    pdfArrayBuffer,
+    processorId,
+    processorName,
+    processorType,
+    documentId,
+    client,
+    supabase,
+    document,
+    sizeAnalysis,
+    timeEstimate,
+  } = params
+
+  const chunkedData = await processDocumentInChunks(
+    pdfArrayBuffer,
+    processorId,
+    processorName,
+    processorType,
+    documentId,
+    client
+  )
+
+  if (await checkCancellation(documentId)) {
+    logger.info('Document cancelled before chunked embedding generation', { documentId })
+    throw new ProcessingCancelledException(documentId)
+  }
+
+  await updateProcessingStatus(documentId, 'processing', 60, 'Extracting structured data from chunks...')
+  await updateProcessingStatus(documentId, 'processing', 80, 'Generating embeddings from chunks...')
+  logger.logDocumentProcessing('embedding-generation', documentId, 'started', { progress: 80 })
+
+  const { embeddingStats, excludedSection } = await saveProcessedDocumentData(
+    supabase,
+    documentId,
+    chunkedData,
+    document,
+    sizeAnalysis,
+    null
+  )
+
+  await updateProcessingStatus(documentId, 'completed', 100, 'Document processing completed successfully')
+  logger.logDocumentProcessing('embedding-generation', documentId, 'completed', { progress: 100 })
+
+  await supabase
+    .from('documents')
+    .update({
+      status: 'completed',
+      processing_error: null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', documentId)
+
+  logger.logDocumentProcessing('completion', documentId, 'completed')
+  await invalidateDocumentCaches(documentId, document.user_id)
+
+  const metrics: DocumentProcessingMetrics = {
+    sizeAnalysis,
+    pageCount: chunkedData.pageCount,
+    chunkCount: embeddingStats.chunkCount,
+    embeddingsAttempts: embeddingStats.attempts,
+    embeddingsRetries: embeddingStats.retryCount,
+    structuredFieldCount: chunkedData.structuredData.fields?.length || 0,
+    textLength: chunkedData.extractedText.length,
+    processor: {
+      id: processorId,
+      name: processorName,
+      type: `${processorType}-chunked`
+    },
+    estimatedProcessingSeconds: timeEstimate.estimatedMinutes * 60
+  }
+
+  if (excludedSection) {
+    metrics.excludedSections = [{
+      type: excludedSection.type,
+      startPage: excludedSection.startPage,
+      endPage: excludedSection.endPage,
+      pageCount: excludedSection.pageCount
+    }]
+  }
+
+  logger.info('Chunked processing completed successfully', {
+    documentId,
+    chunksProcessed: metrics.chunkCount,
+    totalPages: metrics.pageCount
+  })
+
+  return { switchedToBatch: false, metrics }
+}
+
+async function cleanupPartialEmbeddings(documentId: string) {
+  const vectorIds = await getVectorIdsForDocument(documentId)
+  queuePineconeDeletion(documentId, vectorIds)
+
+  const supabase = await createServiceClient()
+  try {
+    const { error } = await supabase
+      .from('document_embeddings')
+      .delete()
+      .eq('document_id', documentId)
+
+    if (error) {
+      logger.warn('Failed to cleanup partial embeddings after processing error', {
+        documentId,
+        error: error.message
+      })
+    } else {
+      logger.info('Cleaned up partial embeddings after processing error', { documentId })
+    }
+  } catch (error) {
+    logger.warn('Unexpected error cleaning up partial embeddings', {
+      documentId,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  } finally {
+    releaseServiceClient(supabase)
   }
 }
 
@@ -1606,12 +1747,14 @@ function extractParagraphsFromDocument(document: DocumentAIDocument, pageOffset:
 function buildProcessedDocumentData(document: DocumentAIDocument, pageOffset: number = 0): ProcessedDocumentData {
   const structuredData = extractStructuredFields(document, pageOffset)
   const pagesText = extractTextByPages(document, pageOffset)
+  const paragraphs = extractParagraphsFromDocument(document, pageOffset)
 
   return {
     extractedText: document.text || '',
     structuredData,
     pageCount: document.pages ? document.pages.length : 0,
-    pagesText
+    pagesText,
+    paragraphs
   }
 }
 
@@ -1619,8 +1762,8 @@ function buildProcessedDocumentData(document: DocumentAIDocument, pageOffset: nu
 // Uses sentence-based chunking across the full document, then assigns page numbers
 function splitTextIntoPagedChunks(
   pagesText: { text: string; pageNumber: number }[],
-  _chunkSize: number, // Ignored - kept for backward compatibility
-  _overlap: number = DEFAULT_CHUNK_OVERLAP // Ignored - kept for backward compatibility
+  _chunkSize: number = DEFAULT_CHUNK_SIZE, // Ignored - kept for backward compatibility
+  overlap: number = SENTENCE_OVERLAP
 ): PagedChunk[] {
   // Build a character-to-page mapping
   const charToPage: number[] = []
@@ -1643,7 +1786,7 @@ function splitTextIntoPagedChunks(
   const chunks = chunkBySentences(
     fullText,
     SENTENCES_PER_CHUNK,
-    SENTENCE_OVERLAP,
+    overlap,
     MIN_CHUNK_TOKENS,
     MAX_CHUNK_TOKENS
   )
@@ -1709,7 +1852,8 @@ async function generateEmbeddingsWithUnlimitedRetries(
   document: DocumentAIDocument | null,
   docRecord: DatabaseDocument,
   sizeAnalysis?: DocumentSizeAnalysis,
-  pagesTextOverride?: { text: string; pageNumber: number }[]
+  pagesTextOverride?: { text: string; pageNumber: number }[],
+  paragraphsOverride?: Paragraph[]
 ): Promise<EmbeddingGenerationStats> {
   const timeoutConfig = sizeAnalysis?.timeoutConfig
   const maxRetryAttempts = timeoutConfig?.maxRetryAttempts || 1000000
@@ -1743,7 +1887,8 @@ async function generateEmbeddingsWithUnlimitedRetries(
         filename,
         docRecord.user_id ?? null,
         sizeAnalysis,
-        document
+        document,
+        paragraphsOverride
       )
 
       logger.info('Embedding generation completed successfully', { attempt: attempt + 1, documentId, component: 'document-processing' })
@@ -2071,24 +2216,39 @@ async function generateEmbeddingsFromPages(
   filename: string,
   userId: string | null,
   sizeAnalysis?: DocumentSizeAnalysis,
-  document?: DocumentAIDocument | null
+  document?: DocumentAIDocument | null,
+  paragraphsOverride?: Paragraph[]
 ): Promise<{ chunkCount: number }> {
   // Use paragraph-based chunking if document is available, otherwise fall back to text-based
   let pagedChunks: PagedChunk[]
 
-  if (document && document.pages) {
+  const paragraphCandidates = paragraphsOverride && paragraphsOverride.length > 0
+    ? paragraphsOverride
+    : (document && document.pages ? extractParagraphsFromDocument(document) : [])
+
+  if (paragraphCandidates.length > 0) {
     logger.info('Using paragraph-based semantic chunking', {
       documentId,
-      component: 'document-processing'
+      component: 'document-processing',
+      paragraphCount: paragraphCandidates.length
     })
-    const paragraphs = extractParagraphsFromDocument(document)
-    pagedChunks = splitParagraphsIntoChunks(paragraphs)
+    pagedChunks = splitParagraphsIntoChunks(paragraphCandidates)
   } else {
-    logger.info('Using legacy text-based chunking (no document structure available)', {
+    logger.warn('Paragraph metadata unavailable; falling back to sentence-based chunking', {
+      documentId,
+      component: 'document-processing',
+      pages: pagesText.length
+    })
+    pagedChunks = splitTextIntoPagedChunks(
+      pagesText,
+      DEFAULT_CHUNK_SIZE,
+      0 // force zero overlap in fallback mode
+    )
+
+    logger.warn('Consider inspecting Document AI output - paragraph chunking fallback used', {
       documentId,
       component: 'document-processing'
     })
-    pagedChunks = splitTextIntoPagedChunks(pagesText, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP)
   }
 
   logger.info('Starting chunk processing for document', {

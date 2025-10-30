@@ -27,8 +27,10 @@ import { formatUploadDate } from '@/lib/date-utils'
 interface SimilarityScores {
   sourceScore: number
   targetScore: number
-  overlapScore: number
+  matchedSourceTokens: number
+  matchedTargetTokens: number
   explanation: string
+  lengthRatio?: number | null
 }
 
 interface SectionMatch {
@@ -84,8 +86,8 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
     const targetDiff = a.scores.targetScore - b.scores.targetScore
     if (Math.abs(targetDiff) > tolerance) return targetDiff
 
-    const overlapDiff = a.scores.overlapScore - b.scores.overlapScore
-    if (Math.abs(overlapDiff) > tolerance) return overlapDiff
+    const matchedTokenDiff = a.scores.matchedTargetTokens - b.scores.matchedTargetTokens
+    if (matchedTokenDiff !== 0) return matchedTokenDiff
 
     const uploadDiff = getCreatedAtTime(a.document) - getCreatedAtTime(b.document)
     if (uploadDiff !== 0) return uploadDiff
@@ -107,9 +109,6 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
           break
         case 'source_score':
           comparison = compareScoreHierarchy(a, b)
-          break
-        case 'overlap_score':
-          comparison = a.scores.overlapScore - b.scores.overlapScore
           break
         case 'upload_time':
           comparison = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
@@ -233,10 +232,9 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
                         <SelectValue placeholder="Sort by..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="source_score">Source Score</SelectItem>
-                        <SelectItem value="target_score">Target Score</SelectItem>
-                        <SelectItem value="overlap_score">Overlap</SelectItem>
-                        <SelectItem value="upload_time">Upload Time</SelectItem>
+                    <SelectItem value="source_score">Source Score</SelectItem>
+                    <SelectItem value="target_score">Target Score</SelectItem>
+                    <SelectItem value="upload_time">Upload Time</SelectItem>
                         <SelectItem value="name">Name</SelectItem>
                         <SelectItem value="size">Size</SelectItem>
                       </SelectContent>
@@ -274,7 +272,10 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
             </div>
           ) : (
             <div className="space-y-4">
-              {sortedResults.map(result => (
+              {sortedResults.map(result => {
+                const lengthRatio = result.scores?.lengthRatio ?? null
+
+                return (
                 <Card key={result.document.id} className="border border-blue-100 dark:border-blue-900">
                   <div className="flex flex-col gap-3 p-4">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -330,9 +331,11 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
                             <Badge variant="outline" className="text-xs">
                               Target: {Math.round(result.scores.targetScore * 100)}%
                             </Badge>
-                            <Badge variant="outline" className="text-xs">
-                              Overlap: {Math.round(result.scores.overlapScore * 100)}%
-                            </Badge>
+                            {lengthRatio !== null && Number.isFinite(lengthRatio) && (
+                              <Badge variant="outline" className="text-xs">
+                                Length Ratio: {(lengthRatio / 100).toFixed(2)}
+                              </Badge>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -372,7 +375,7 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
                     </div>
                   </div>
                 </Card>
-              ))}
+              )})}
             </div>
           )}
         </CardContent>

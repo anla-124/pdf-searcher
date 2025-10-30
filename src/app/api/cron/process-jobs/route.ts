@@ -40,6 +40,39 @@ interface QueueStatRecord {
   created_at: string
 }
 
+const DEFAULT_RETRY_DELAY_MS = 1000
+
+function scheduleCronRetry(requestUrl: string, reason: string, delayMs: number = DEFAULT_RETRY_DELAY_MS) {
+  const secret = process.env['CRON_SECRET']
+  if (!secret) {
+    logger.warn('Skipping cron auto-retry because CRON_SECRET is not set', { reason })
+    return
+  }
+
+  try {
+    const url = new URL(requestUrl)
+    setTimeout(() => {
+      fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${secret}`,
+          'x-cron-auto-retry': reason,
+        },
+      }).catch(error => {
+        logger.warn('Auto-triggered cron retry failed', {
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+    }, delayMs)
+  } catch (error) {
+    logger.warn('Failed to schedule cron retry', {
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 // Always try sync processing first - no estimation needed
 function needsBatchProcessing(fileSize: number, filename: string): boolean {
   // Always try sync first - let Document AI tell us if it's too large
@@ -459,6 +492,28 @@ export async function GET(request: NextRequest) {
     
     // UNLIMITED MODE: Never block processing
     if (!unlimitedMode && availableSlots === 0) {
+      try {
+        const { data: queuedPeek, error: queuedPeekError } = await supabase
+          .from('document_jobs')
+          .select('id')
+          .eq('status', 'queued')
+          .limit(1)
+
+        if (queuedPeekError) {
+          logger.warn('Failed to peek queued jobs before scheduling retry', {
+            component: 'cron-job',
+            error: queuedPeekError.message ?? queuedPeekError,
+          })
+        } else if (queuedPeek && queuedPeek.length > 0) {
+          scheduleCronRetry(request.url, 'capacity-full')
+        }
+      } catch (peekError) {
+        logger.warn('Unexpected error while checking queued jobs before scheduling retry', {
+          component: 'cron-job',
+          error: peekError instanceof Error ? peekError.message : String(peekError),
+        })
+      }
+
       logger.warn('All processing slots occupied, waiting for completion', {
         currentProcessing,
         maxConcurrent: maxConcurrentDocs,
@@ -474,6 +529,8 @@ export async function GET(request: NextRequest) {
     
     // Get jobs that need processing (queued) OR jobs that are processing with batch operations (to check completion)
     // CRITICAL FIX: Use inner join to ensure document exists
+    // Paid tiers: raise MAX_CONCURRENT_DOCUMENTS (and matching pool limits) so availableSlots grows.
+    const fetchLimit = unlimitedMode ? 1000 : Math.max(availableSlots, 1)
     const { data: jobs, error: jobsError } = await supabase
       .from('document_jobs')
       .select(`
@@ -500,7 +557,7 @@ export async function GET(request: NextRequest) {
       .in('status', ['queued', 'processing'])
       .order('priority', { ascending: false })
       .order('created_at', { ascending: true })
-      .limit(unlimitedMode ? 1000 : availableSlots * 2) // UNLIMITED: Process up to 1000 jobs per batch
+      .limit(fetchLimit) // Limit fetches to the number of available slots (or 1000 in unlimited mode)
       .returns<DocumentJobRecord[]>()
 
     if (jobsError) {
@@ -583,18 +640,30 @@ export async function GET(request: NextRequest) {
     }
     const client: ServiceSupabase = supabase
 
-    // Process jobs concurrently with Promise.allSettled to avoid failing all on one error
-    const jobPromises = jobs.map((job) => processJob(client, job))
-    const results = await Promise.allSettled(jobPromises)
+    // Increase MAX_CONCURRENT_DOCUMENTS when premium resources are available to process more jobs in parallel.
+    const slotsToUse = unlimitedMode ? jobs.length : Math.min(jobs.length, Math.max(availableSlots, 1))
+    const jobsToProcess = jobs.slice(0, slotsToUse)
+
+    const results: Array<{ job: DocumentJobRecord; status: 'fulfilled' | 'rejected'; error?: unknown }> = []
+
+    for (const job of jobsToProcess) {
+      try {
+        await processJob(client, job)
+        results.push({ job, status: 'fulfilled' })
+      } catch (error) {
+        results.push({ job, status: 'rejected', error })
+      }
+    }
     
-    // Analyze results with enhanced metrics
-    const successful = results.filter(r => r.status === 'fulfilled').length
-    const failed = results.filter(r => r.status === 'rejected').length
+    const successful = results.filter(result => result.status === 'fulfilled').length
+    const failed = results.length - successful
     const processingTime = Date.now() - processingStartTime
-    const throughput = jobs.length / (processingTime / 1000) // jobs per second
+    const throughput = results.length === 0 || processingTime === 0
+      ? 0
+      : results.length / (processingTime / 1000)
     
     logger.info('Job processing batch complete', {
-      totalJobs: jobs.length,
+      totalJobs: results.length,
       successful,
       failed,
       processingTimeMs: processingTime,
@@ -603,35 +672,58 @@ export async function GET(request: NextRequest) {
     })
     if (!unlimitedMode) {
       logger.info('Capacity utilization after processing', {
-        processedJobs: jobs.length,
+        processedJobs: results.length,
         maxConcurrent: maxConcurrentDocs,
-        utilization: Math.round(jobs.length / maxConcurrentDocs * 100),
+        utilization: Math.round(results.length / maxConcurrentDocs * 100),
         component: 'cron-job'
       })
     } else {
       logger.info('Unlimited mode batch throughput', {
-        processedJobs: jobs.length,
+        processedJobs: results.length,
         component: 'cron-job'
+      })
+    }
+
+    try {
+      const { data: remainingQueued, error: remainingError } = await supabase
+        .from('document_jobs')
+        .select('id')
+        .eq('status', 'queued')
+        .limit(1)
+
+      if (remainingError) {
+        logger.warn('Failed to check remaining queued jobs after processing batch', {
+          component: 'cron-job',
+          error: remainingError.message ?? remainingError,
+        })
+      } else if (remainingQueued && remainingQueued.length > 0) {
+        scheduleCronRetry(request.url, 'jobs-remaining')
+      }
+    } catch (remainingCheckError) {
+      logger.warn('Unexpected error while checking for remaining queued jobs', {
+        component: 'cron-job',
+        error: remainingCheckError instanceof Error ? remainingCheckError.message : String(remainingCheckError),
       })
     }
     
     return NextResponse.json({
-      message: `Processed ${jobs.length} jobs`,
+      message: `Processed ${results.length} jobs`,
       summary: {
-        total: jobs.length,
+        total: results.length,
         successful,
         failed,
         processingTimeMs: processingTime,
         throughputJobsPerSec: parseFloat(throughput.toFixed(2)),
-        capacityUtilization: unlimitedMode ? 'unlimited' : `${jobs.length}/${maxConcurrentDocs} (${Math.round(jobs.length/maxConcurrentDocs*100)}%)`,
+        capacityUtilization: unlimitedMode ? 'unlimited' : `${results.length}/${maxConcurrentDocs} (${Math.round(results.length/maxConcurrentDocs*100)}%)`,
         systemStatus: unlimitedMode ? 'unlimited-processing' : 'enterprise-ready',
-        details: results.map((result, index) => {
-          const jobInfo = jobs[index]!
+        details: results.map((result) => {
           return {
-            jobId: jobInfo.id,
-            documentId: jobInfo.document_id,
+            jobId: result.job.id,
+            documentId: result.job.document_id,
             status: result.status,
-            error: result.status === 'rejected' ? result.reason : null
+            error: result.status === 'rejected'
+              ? (result.error instanceof Error ? result.error.message : result.error)
+              : null
           }
         })
       }

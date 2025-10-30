@@ -135,6 +135,10 @@ export class SupabaseConnectionPool {
     return { ...this.metrics }
   }
 
+  getConfigSnapshot(): PoolConfig {
+    return { ...this.config }
+  }
+
   /**
    * Health check for monitoring
    */
@@ -295,6 +299,7 @@ export const connectionPool = {
   releaseServiceClient: (client: SupabaseClient) => getConnectionPoolInstance().releaseServiceClient(client),
   getMetrics: () => getConnectionPoolInstance().getMetrics(),
   healthCheck: async () => getConnectionPoolInstance().healthCheck(),
+  getConfig: () => getConnectionPoolInstance().getConfigSnapshot(),
   shutdown: () => getConnectionPoolInstance().shutdown()
 }
 

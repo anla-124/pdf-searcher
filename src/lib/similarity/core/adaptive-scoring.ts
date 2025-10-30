@@ -24,36 +24,37 @@ export function computeAdaptiveScore(
   let matchedTokensA = 0  // Tokens from doc A in matched pairs
   let matchedTokensB = 0  // Tokens from doc B in matched pairs
 
+  const uniqueSourceChunks = new Set<string>()
+  const uniqueTargetChunks = new Set<string>()
+
   for (const match of matchedPairs) {
-    matchedTokensA += match.chunkA.tokenCount
-    matchedTokensB += match.chunkB.tokenCount
+    if (!uniqueSourceChunks.has(match.chunkA.id)) {
+      matchedTokensA += match.chunkA.tokenCount
+      uniqueSourceChunks.add(match.chunkA.id)
+    }
+
+    if (!uniqueTargetChunks.has(match.chunkB.id)) {
+      matchedTokensB += match.chunkB.tokenCount
+      uniqueTargetChunks.add(match.chunkB.id)
+    }
   }
 
-  // 1. Jaccard Similarity (token-weighted, pair-based)
-  // Total unique tokens involved = tokensA + tokensB - matched_pair_tokens
-  // We use the average of matched tokens from both sides for the overlap
-  const matchedPairTokens = (matchedTokensA + matchedTokensB) / 2
-  const uniqueTokens = docA_totalTokens + docB_totalTokens - matchedPairTokens
-  const jaccard = uniqueTokens > 0 ? matchedPairTokens / uniqueTokens : 0
-
-  // 2. Coverage from each perspective (directional scores)
+  // Coverage from each perspective (directional scores)
   const sourceScore = docA_totalTokens > 0 ? matchedTokensA / docA_totalTokens : 0
   const targetScore = docB_totalTokens > 0 ? matchedTokensB / docB_totalTokens : 0
 
-  // 3. Overlap store for convenience (already computed above as jaccard)
-  const overlapScore = jaccard
-
-  // 4. User-Facing Explanation
+  // User-Facing Explanation
   const matchedPairs_count = matchedPairs.length
   const explanation =
     `Source reuse ${(sourceScore * 100).toFixed(1)}% (${matchedTokensA.toLocaleString()}/${docA_totalTokens.toLocaleString()} tokens), ` +
     `target reuse ${(targetScore * 100).toFixed(1)}% (${matchedTokensB.toLocaleString()}/${docB_totalTokens.toLocaleString()} tokens) ` +
-    `across ${matchedPairs_count} chunk pairs. Overlap ${(overlapScore * 100).toFixed(1)}%.`
+    `across ${matchedPairs_count} chunk pairs.`
 
   return {
     sourceScore,
     targetScore,
-    overlapScore,
+    matchedSourceTokens: matchedTokensA,
+    matchedTargetTokens: matchedTokensB,
     explanation
   }
 }

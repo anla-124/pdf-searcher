@@ -1,5 +1,5 @@
 import { Pinecone } from '@pinecone-database/pinecone'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import type { 
   BusinessMetadata 
 } from '@/types/external-apis'
@@ -229,34 +229,17 @@ export async function vectorSearch(
 /**
  * Delete document vectors from Pinecone
  */
-export async function deleteDocumentFromPinecone(documentId: string): Promise<void> {
+export async function deleteDocumentFromPinecone(documentId: string, presetVectorIds?: string[]): Promise<void> {
   try {
-    // 1. Get all vector IDs from the database for this document
-    // CRITICAL: Override Supabase's default 1000 row limit to get ALL chunks
-    const supabase = await createServiceClient()
-    const { data: chunks, error: dbError } = await supabase
-      .from('document_embeddings')
-      .select('chunk_index')
-      .eq('document_id', documentId)
-      .range(0, 999999) // Override default 1000 row limit
+    const vectorIds = Array.isArray(presetVectorIds) && presetVectorIds.length > 0
+      ? [...presetVectorIds]
+      : await fetchVectorIdsFromSupabase(documentId)
 
-    if (dbError) {
-      throw new Error(`Failed to fetch chunk info for deletion from database: ${dbError.message}`)
-    }
-
-    if (!chunks || chunks.length === 0) {
-      console.warn(`No chunks found in database for document ${documentId}, no vectors to delete from Pinecone.`)
-      return // Nothing to delete
-    }
-
-    const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
-
-    if (vectorIds.length === 0) {
-      console.warn(`No vector IDs computed for document ${documentId}, skipping Pinecone deletion.`)
+    if (!vectorIds || vectorIds.length === 0) {
+      console.warn(`No vector IDs available for document ${documentId}, nothing to delete from Pinecone.`)
       return
     }
 
-    // 2. Delete vectors from Pinecone by ID in batches (Pinecone limit: 1000 per call)
     const BATCH_SIZE = 1000
     let totalAttempted = 0
 
@@ -270,11 +253,39 @@ export async function deleteDocumentFromPinecone(documentId: string): Promise<vo
       }
     }
 
-    console.warn(`✅ Attempted to delete ${totalAttempted} vectors for document ${documentId} from Pinecone (based on ${chunks.length} database records)`)
+    console.warn(`✅ Deleted ${totalAttempted} vectors for document ${documentId} from Pinecone`)
   } catch (error) {
     console.error(`❌ Failed to delete vectors for document ${documentId}:`, error)
     throw error
   }
+}
+
+async function fetchVectorIdsFromSupabase(documentId: string): Promise<string[] | null> {
+  const supabase = await createServiceClient()
+  try {
+    const { data: chunks, error: dbError } = await supabase
+      .from('document_embeddings')
+      .select('chunk_index')
+      .eq('document_id', documentId)
+      .range(0, 999999)
+
+    if (dbError) {
+      throw new Error(`Failed to fetch chunk info for deletion from database: ${dbError.message}`)
+    }
+
+    if (!chunks || chunks.length === 0) {
+      return null
+    }
+
+    return chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
+  } finally {
+    releaseServiceClient(supabase)
+  }
+}
+
+export async function getVectorIdsForDocument(documentId: string): Promise<string[]> {
+  const ids = await fetchVectorIdsFromSupabase(documentId)
+  return Array.isArray(ids) ? ids : []
 }
 
 /**
@@ -290,22 +301,23 @@ export async function updateDocumentMetadataInPinecone(
     // 1. Get all vector IDs from the database
     // CRITICAL: Override Supabase's default 1000 row limit to get ALL chunks
     const supabase = await createServiceClient()
-    const { data: chunks, error: dbError } = await supabase
-      .from('document_embeddings')
-      .select('chunk_index')
-      .eq('document_id', documentId)
-      .range(0, 999999) // Override default 1000 row limit
+    try {
+      const { data: chunks, error: dbError } = await supabase
+        .from('document_embeddings')
+        .select('chunk_index')
+        .eq('document_id', documentId)
+        .range(0, 999999) // Override default 1000 row limit
 
-    if (dbError) {
-      throw new Error(`Failed to fetch chunk info from database: ${dbError.message}`)
-    }
+      if (dbError) {
+        throw new Error(`Failed to fetch chunk info from database: ${dbError.message}`)
+      }
 
-    if (!chunks || chunks.length === 0) {
-      console.warn(`No chunks found for document ${documentId}, skipping Pinecone update.`)
-      return
-    }
+      if (!chunks || chunks.length === 0) {
+        console.warn(`No chunks found for document ${documentId}, skipping Pinecone update.`)
+        return
+      }
 
-    const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
+      const vectorIds = chunks.map(chunk => `${documentId}_chunk_${chunk.chunk_index}`)
 
     // 2. Fetch the full vectors from Pinecone in batches to avoid URL length limits
     // Pinecone supports up to 1000 vectors per fetch, but we use smaller batches to avoid 414 errors
@@ -340,8 +352,11 @@ export async function updateDocumentMetadataInPinecone(
     // 4. Upsert the vectors back into Pinecone
     await getPineconeIndex().upsert(updatedVectors)
 
-    console.warn(`✅ Successfully updated metadata for ${updatedVectors.length} vectors in Pinecone for document ${documentId}`)
+      console.warn(`✅ Successfully updated metadata for ${updatedVectors.length} vectors in Pinecone for document ${documentId}`)
     
+    } finally {
+      releaseServiceClient(supabase)
+    }
   } catch (error) {
     console.error(`❌ Failed to update metadata for document ${documentId}:`, error)
     // In a production scenario, you might want to queue this for a retry
