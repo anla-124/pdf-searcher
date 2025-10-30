@@ -11,7 +11,7 @@
  */
 
 import { logger } from '@/lib/logger'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { stage0CandidateRetrieval } from './stages/stage0-candidate-retrieval'
 import { stage1ChunkPrefilter } from './stages/stage1-chunk-prefilter'
 import { stage2FinalScoring } from './stages/stage2-final-scoring'
@@ -350,163 +350,166 @@ async function fetchDocumentChunks(
   options: { pageRange?: { start_page: number; end_page: number } } = {}
 ): Promise<Chunk[]> {
   const supabase = await createServiceClient()
+  try {
+    const defaultPageSize = 100
+    let currentPageSize = defaultPageSize
+    let start = 0
+    const allChunks: {
+      chunk_index: number
+      page_number: number | null
+      embedding: number[] | string
+      chunk_text: string | null
+      token_count: number | null
+    }[] = []
 
-  const defaultPageSize = 100
-  let currentPageSize = defaultPageSize
-  let start = 0
-  const allChunks: {
-    chunk_index: number
-    page_number: number | null
-    embedding: number[] | string
-    chunk_text: string | null
-    token_count: number | null
-  }[] = []
+    while (true) {
+      const pageSizeUsed = currentPageSize
+      const end = start + pageSizeUsed - 1
 
-  while (true) {
-    const pageSizeUsed = currentPageSize
-    const end = start + pageSizeUsed - 1
+      let query = supabase
+        .from('document_embeddings')
+        .select('chunk_index, page_number, embedding, chunk_text, token_count')
+        .eq('document_id', documentId)
 
-    let query = supabase
-      .from('document_embeddings')
-      .select('chunk_index, page_number, embedding, chunk_text, token_count')
-      .eq('document_id', documentId)
+      if (options.pageRange) {
+        query = query
+          .gte('page_number', options.pageRange.start_page)
+          .lte('page_number', options.pageRange.end_page)
+      }
 
-    if (options.pageRange) {
-      query = query
-        .gte('page_number', options.pageRange.start_page)
-        .lte('page_number', options.pageRange.end_page)
+      const { data, error } = await query
+        .order('chunk_index', { ascending: true })
+        .range(start, end)
+        .returns<Array<{
+          chunk_index: number | null
+          page_number: number | null
+          embedding: number[] | string
+          chunk_text: string | null
+          token_count: number | null
+        }>>()
+
+      if (error) {
+        if ((error as { code?: string }).code === '57014' && currentPageSize > 25) {
+          currentPageSize = Math.max(25, Math.floor(currentPageSize / 2))
+          logger.warn('Supabase timeout fetching chunks; reducing page size', {
+            documentId,
+            nextPageSize: currentPageSize
+          })
+          continue
+        }
+        logger.error(
+          'Failed to fetch chunks for document embeddings',
+          error instanceof Error ? error : new Error(String(error)),
+          { documentId }
+        )
+        return []
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      const sanitized = data
+        .filter(record => typeof record.chunk_index === 'number')
+        .map(record => ({
+          chunk_index: record.chunk_index as number,
+          page_number: typeof record.page_number === 'number' ? record.page_number : null,
+          embedding: record.embedding,
+          chunk_text: record.chunk_text,
+          token_count: typeof record.token_count === 'number' ? record.token_count : null
+        }))
+
+      allChunks.push(...sanitized)
+      start += data.length
+      currentPageSize = defaultPageSize
+
+      if (data.length < pageSizeUsed) {
+        break
+      }
     }
 
-    const { data, error } = await query
-      .order('chunk_index', { ascending: true })
-      .range(start, end)
-      .returns<Array<{
-        chunk_index: number | null
-        page_number: number | null
-        embedding: number[] | string
-        chunk_text: string | null
-        token_count: number | null
-      }>>()
-
-    if (error) {
-      if ((error as { code?: string }).code === '57014' && currentPageSize > 25) {
-        currentPageSize = Math.max(25, Math.floor(currentPageSize / 2))
-        logger.warn('Supabase timeout fetching chunks; reducing page size', {
-          documentId,
-          nextPageSize: currentPageSize
-        })
-        continue
-      }
-      logger.error(
-        'Failed to fetch chunks for document embeddings',
-        error instanceof Error ? error : new Error(String(error)),
-        { documentId }
-      )
+    if (allChunks.length === 0) {
       return []
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    const sanitized = data
-      .filter(record => typeof record.chunk_index === 'number')
-      .map(record => ({
-        chunk_index: record.chunk_index as number,
-        page_number: typeof record.page_number === 'number' ? record.page_number : null,
-        embedding: record.embedding,
-        chunk_text: record.chunk_text,
-        token_count: typeof record.token_count === 'number' ? record.token_count : null
-      }))
-
-    allChunks.push(...sanitized)
-    start += data.length
-    currentPageSize = defaultPageSize
-
-    if (data.length < pageSizeUsed) {
-      break
-    }
-  }
-
-  if (allChunks.length === 0) {
-    return []
-  }
-
-  // CRITICAL: Deduplicate chunks by chunk_index (some documents have duplicates)
-  const seen = new Set<number>()
-  const uniqueChunks = allChunks.filter(chunk => {
-    if (seen.has(chunk.chunk_index)) {
-      return false
-    }
-    seen.add(chunk.chunk_index)
-    return true
-  })
-
-  if (allChunks.length !== uniqueChunks.length) {
-    logger.warn('Found duplicate chunks when fetching document embeddings', {
-      documentId,
-      totalChunks: allChunks.length,
-      uniqueChunks: uniqueChunks.length
+    // CRITICAL: Deduplicate chunks by chunk_index (some documents have duplicates)
+    const seen = new Set<number>()
+    const uniqueChunks = allChunks.filter(chunk => {
+      if (seen.has(chunk.chunk_index)) {
+        return false
+      }
+      seen.add(chunk.chunk_index)
+      return true
     })
-  }
 
-  const normalizedChunks: Chunk[] = []
+    if (allChunks.length !== uniqueChunks.length) {
+      logger.warn('Found duplicate chunks when fetching document embeddings', {
+        documentId,
+        totalChunks: allChunks.length,
+        uniqueChunks: uniqueChunks.length
+      })
+    }
 
-  for (const chunk of uniqueChunks) {
-    let embeddingValue: unknown = chunk.embedding
+    const normalizedChunks: Chunk[] = []
 
-    if (typeof embeddingValue === 'string') {
-      try {
-        embeddingValue = JSON.parse(embeddingValue)
-      } catch (parseError) {
-        logger.error(
-          'Failed to parse chunk embedding',
-          parseError instanceof Error ? parseError : new Error(String(parseError)),
-          { documentId, chunkIndex: chunk.chunk_index }
-        )
+    for (const chunk of uniqueChunks) {
+      let embeddingValue: unknown = chunk.embedding
+
+      if (typeof embeddingValue === 'string') {
+        try {
+          embeddingValue = JSON.parse(embeddingValue)
+        } catch (parseError) {
+          logger.error(
+            'Failed to parse chunk embedding',
+            parseError instanceof Error ? parseError : new Error(String(parseError)),
+            { documentId, chunkIndex: chunk.chunk_index }
+          )
+          continue
+        }
+      }
+
+      if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
+        logger.error('Chunk embedding is not a numeric array', undefined, {
+          documentId,
+          chunkIndex: chunk.chunk_index,
+          type: typeof embeddingValue
+        })
         continue
       }
-    }
 
-    if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
-      logger.error('Chunk embedding is not a numeric array', undefined, {
-        documentId,
-        chunkIndex: chunk.chunk_index,
-        type: typeof embeddingValue
+      const numericEmbedding = embeddingValue as number[]
+
+      // Calculate token count (use stored value or estimate from text)
+      let tokenCount: number
+      if (typeof chunk.token_count === 'number' && chunk.token_count > 0) {
+        tokenCount = chunk.token_count
+      } else if (chunk.chunk_text) {
+        // Fallback: estimate tokens as text.length / 4
+        tokenCount = Math.ceil(chunk.chunk_text.length / 4)
+      } else {
+        // Last resort: assume minimum token count
+        tokenCount = 1
+      }
+
+      normalizedChunks.push({
+        id: `${documentId}_chunk_${chunk.chunk_index}`,
+        index: chunk.chunk_index,
+        pageNumber: chunk.page_number || 1,
+        embedding: numericEmbedding,
+        text: chunk.chunk_text ?? undefined,
+        tokenCount
       })
-      continue
     }
 
-    const numericEmbedding = embeddingValue as number[]
-
-    // Calculate token count (use stored value or estimate from text)
-    let tokenCount: number
-    if (typeof chunk.token_count === 'number' && chunk.token_count > 0) {
-      tokenCount = chunk.token_count
-    } else if (chunk.chunk_text) {
-      // Fallback: estimate tokens as text.length / 4
-      tokenCount = Math.ceil(chunk.chunk_text.length / 4)
-    } else {
-      // Last resort: assume minimum token count
-      tokenCount = 1
+    if (normalizedChunks.length === 0) {
+      logger.warn('Fetched chunk data but none had valid embeddings', { documentId })
+      return []
     }
 
-    normalizedChunks.push({
-      id: `${documentId}_chunk_${chunk.chunk_index}`,
-      index: chunk.chunk_index,
-      pageNumber: chunk.page_number || 1,
-      embedding: numericEmbedding,
-      text: chunk.chunk_text ?? undefined,
-      tokenCount
-    })
+    return normalizedChunks
+  } finally {
+    releaseServiceClient(supabase)
   }
-
-  if (normalizedChunks.length === 0) {
-    logger.warn('Fetched chunk data but none had valid embeddings', { documentId })
-    return []
-  }
-
-  return normalizedChunks
 }
 
 /**
@@ -514,18 +517,21 @@ async function fetchDocumentChunks(
  */
 async function fetchDocumentMetadata(documentId: string): Promise<SupabaseDocumentRecord> {
   const supabase = await createServiceClient()
+  try {
+    const { data: doc, error } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', documentId)
+      .single()
 
-  const { data: doc, error } = await supabase
-    .from('documents')
-    .select('*')
-    .eq('id', documentId)
-    .single()
+    if (error || !doc) {
+      throw new Error(`Document not found: ${documentId}`)
+    }
 
-  if (error || !doc) {
-    throw new Error(`Document not found: ${documentId}`)
+    return doc as SupabaseDocumentRecord
+  } finally {
+    releaseServiceClient(supabase)
   }
-
-  return doc as SupabaseDocumentRecord
 }
 
 /**
@@ -543,8 +549,9 @@ export async function validateDocumentForSimilarity(
   const errors: string[] = []
   const warnings: string[] = []
 
+  let supabase: Awaited<ReturnType<typeof createServiceClient>> | null = null
   try {
-    const supabase = await createServiceClient()
+    supabase = await createServiceClient()
 
     // Check document exists and has required fields
     const { data: doc, error: docError } = await supabase
@@ -591,6 +598,10 @@ export async function validateDocumentForSimilarity(
   } catch (error) {
     errors.push(`Validation error: ${error}`)
     return { valid: false, errors, warnings }
+  } finally {
+    if (supabase) {
+      releaseServiceClient(supabase)
+    }
   }
 }
 

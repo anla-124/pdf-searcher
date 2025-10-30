@@ -89,6 +89,7 @@ export interface SearchFilters {
   fund_admin?: string[]
   jurisdiction?: string[]
   min_score?: number
+  topK?: number
   page_range?: {
     start_page?: number
     end_page?: number

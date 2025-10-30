@@ -38,6 +38,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
   const [targetMinScore, setTargetMinScore] = useState(0.7)
   const [topK, setTopK] = useState(15)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const requestIdRef = useRef(0)
 
   const pageRange = filters.page_range
   const isPageRangeActive = pageRange?.use_entire_document === false
@@ -64,10 +65,17 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
 
     setIsSearching(true)
     setHasSearched(true)
-    
-    // Create new AbortController for this search
-    abortControllerRef.current = new AbortController()
-    
+    // Cancel any in-flight request before starting a new one
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    // Track the lifetime of this request to avoid stale updates from previous responses
+    const nextRequestId = requestIdRef.current + 1
+    requestIdRef.current = nextRequestId
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
       const response = await fetch(`/api/documents/${documentId}/similar-v2`, {
         method: 'POST',
@@ -75,14 +83,17 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          filters,
+          filters: {
+            ...filters,
+            topK
+          },
           stage0_topK: 600, // Stage 0: Wide centroid sweep for high recall
           stage1_topK: 250, // Stage 1: Preserve broad candidate set for Stage 2
           stage2_fallbackThreshold: 0.8,
           source_min_score: sourceMinScore,
           target_min_score: targetMinScore,
         }),
-        signal: abortControllerRef.current.signal,
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -90,18 +101,24 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
       }
 
       const data = await response.json()
-      setResults(data.results)
+      if (requestIdRef.current === nextRequestId) {
+        setResults(Array.isArray(data.results) ? data.results : [])
+      }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        clientLogger.warn('Search cancelled by user')
-        setResults([])
+        if (requestIdRef.current === nextRequestId) {
+          clientLogger.warn('Search cancelled by user')
+          setResults([])
+        }
       } else {
         clientLogger.error('Similarity search error', error)
         alert('Failed to search for similar documents. Please try again.')
       }
     } finally {
-      setIsSearching(false)
-      abortControllerRef.current = null
+      if (requestIdRef.current === nextRequestId) {
+        setIsSearching(false)
+        abortControllerRef.current = null
+      }
     }
   }
 
@@ -109,6 +126,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       setIsSearching(false)
+      abortControllerRef.current = null
     }
   }
 

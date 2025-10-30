@@ -12,6 +12,7 @@ type RawFilters = Record<string, unknown>
 
 const PINECONE_OPERATOR_IN = '$in'
 const PINECONE_OPERATOR_EQ = '$eq'
+const MAX_RESULT_LIMIT = 100
 
 const parsePositiveInteger = (value: string | undefined): number | undefined => {
   if (!value) return undefined
@@ -20,6 +21,25 @@ const parsePositiveInteger = (value: string | undefined): number | undefined => 
 }
 
 const STAGE2_WORKERS_FALLBACK = parsePositiveInteger(process.env['SIMILARITY_STAGE2_WORKERS'])
+
+function normalizeTopK(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value <= 0) {
+      return undefined
+    }
+    return Math.min(MAX_RESULT_LIMIT, Math.floor(value))
+  }
+
+  if (typeof value === 'string') {
+    const parsed = parsePositiveInteger(value)
+    if (parsed === undefined) {
+      return undefined
+    }
+    return Math.min(MAX_RESULT_LIMIT, parsed)
+  }
+
+  return undefined
+}
 
 function normalizeFilterEntry(value: unknown): { pinecone: unknown; client: unknown } | null {
   if (value === null || value === undefined) {
@@ -338,11 +358,18 @@ export async function POST(
       }
     })
 
+    const normalizedTopK = normalizeTopK(requestedTopK)
+    const limitedResults = normalizedTopK !== undefined
+      ? enrichedResults.slice(0, normalizedTopK)
+      : enrichedResults
+
     logger.info('Similarity search completed', {
       documentId: id,
       stage0Candidates: searchResult.stages.stage0_candidates,
       stage1Candidates: searchResult.stages.stage1_candidates,
       finalResults: searchResult.stages.final_results,
+      deliveredResults: limitedResults.length,
+      appliedTopK: normalizedTopK ?? null,
       timing: searchResult.timing
     })
 
@@ -356,8 +383,8 @@ export async function POST(
     const response = {
       document_id: id,
       document_title: document.title,
-      results: enrichedResults,
-      total_results: enrichedResults.length,
+      results: limitedResults,
+      total_results: limitedResults.length,
       timing: {
         stage0_ms: searchResult.timing.stage0_ms,
         stage1_ms: searchResult.timing.stage1_ms,
@@ -381,7 +408,7 @@ export async function POST(
           ...(pageRangeConfig ? { page_range: pageRangeConfig } : {}),
           ...(requestedMinScore !== undefined ? { min_score: requestedMinScore } : {}),
           ...(requestedThreshold !== undefined ? { threshold: requestedThreshold } : {}),
-          ...(requestedTopK !== undefined ? { topK: requestedTopK } : {})
+          ...(normalizedTopK !== undefined ? { topK: normalizedTopK } : {})
         },
         source_min_score,
         target_min_score

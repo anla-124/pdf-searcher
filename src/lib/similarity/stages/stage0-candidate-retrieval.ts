@@ -6,7 +6,7 @@
  * Purpose: Cast wide net for high recall (don't miss true matches)
  */
 
-import { createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { getPineconeIndex } from '@/lib/pinecone'
 import { logger } from '@/lib/logger'
 import { Stage0Result } from '../types'
@@ -97,9 +97,9 @@ export async function stage0CandidateRetrieval(
     sourcePageRange
   } = options
 
+  const supabase = await createServiceClient()
   try {
     // 1. Get source document centroid (pre-computed and cached)
-    const supabase = await createServiceClient()
     const { data: sourceDoc, error: fetchError } = await supabase
       .from('documents')
       .select('id, centroid_embedding, effective_chunk_count')
@@ -263,6 +263,8 @@ export async function stage0CandidateRetrieval(
       { sourceDocId, durationMs: timeMs }
     )
     throw error
+  } finally {
+    releaseServiceClient(supabase)
   }
 }
 

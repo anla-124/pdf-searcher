@@ -5,7 +5,7 @@
  * Purpose: Provide accurate, proportional similarity scores with section details
  */
 
-import { createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { logger } from '@/lib/logger'
 import { SimilarityResult, Chunk } from '../types'
 import { findBidirectionalMatches } from '../core/chunk-matching'
@@ -340,175 +340,178 @@ async function fetchDocumentChunks(
   options: { pageRange?: { start_page: number; end_page: number } } = {}
 ): Promise<Chunk[]> {
   const supabase = await createServiceClient()
+  try {
+    const defaultPageSize = 100
+    let currentPageSize = defaultPageSize
+    let start = 0
+    const allChunks: {
+      chunk_index: number
+      page_number: number | null
+      embedding: number[] | string
+      chunk_text: string | null
+      token_count: number | null
+    }[] = []
 
-  const defaultPageSize = 100
-  let currentPageSize = defaultPageSize
-  let start = 0
-  const allChunks: {
-    chunk_index: number
-    page_number: number | null
-    embedding: number[] | string
-    chunk_text: string | null
-    token_count: number | null
-  }[] = []
+    while (true) {
+      const pageSizeUsed = currentPageSize
+      const end = start + pageSizeUsed - 1
 
-  while (true) {
-    const pageSizeUsed = currentPageSize
-    const end = start + pageSizeUsed - 1
+      let query = supabase
+        .from('document_embeddings')
+        .select('chunk_index, page_number, embedding, chunk_text, token_count')
+        .eq('document_id', documentId)
 
-    let query = supabase
-      .from('document_embeddings')
-      .select('chunk_index, page_number, embedding, chunk_text, token_count')
-      .eq('document_id', documentId)
+      if (options.pageRange) {
+        query = query
+          .gte('page_number', options.pageRange.start_page)
+          .lte('page_number', options.pageRange.end_page)
+      }
 
-    if (options.pageRange) {
-      query = query
-        .gte('page_number', options.pageRange.start_page)
-        .lte('page_number', options.pageRange.end_page)
+      const { data, error } = await query
+        .order('chunk_index', { ascending: true })
+        .range(start, end)
+        .returns<Array<{
+          chunk_index: number | null
+          page_number: number | null
+          embedding: number[] | string
+          chunk_text: string | null
+          token_count: number | null
+        }>>()
+
+      if (error) {
+        if ((error as { code?: string }).code === '57014' && currentPageSize > 25) {
+          currentPageSize = Math.max(25, Math.floor(currentPageSize / 2))
+          logger.warn('Stage 2: chunk fetch timeout, reducing page size', {
+            documentId,
+            nextPageSize: currentPageSize
+          })
+          continue
+        }
+        logger.error(
+          'Stage 2: failed to fetch chunks',
+          error instanceof Error ? error : new Error(String(error)),
+          { documentId }
+        )
+        return []
+      }
+
+      if (!data || data.length === 0) {
+        break
+      }
+
+      const sanitized = data
+        .filter(record => typeof record.chunk_index === 'number')
+        .map(record => ({
+          chunk_index: record.chunk_index as number,
+          page_number: typeof record.page_number === 'number' ? record.page_number : null,
+          embedding: record.embedding,
+          chunk_text: record.chunk_text,
+          token_count: typeof record.token_count === 'number' ? record.token_count : null
+        }))
+
+      allChunks.push(...sanitized)
+      start += data.length
+      currentPageSize = defaultPageSize
+
+      if (data.length < pageSizeUsed) {
+        break
+      }
     }
 
-    const { data, error } = await query
-      .order('chunk_index', { ascending: true })
-      .range(start, end)
-      .returns<Array<{
-        chunk_index: number | null
-        page_number: number | null
-        embedding: number[] | string
-        chunk_text: string | null
-        token_count: number | null
-      }>>()
-
-    if (error) {
-      if ((error as { code?: string }).code === '57014' && currentPageSize > 25) {
-        currentPageSize = Math.max(25, Math.floor(currentPageSize / 2))
-        logger.warn('Stage 2: chunk fetch timeout, reducing page size', {
-          documentId,
-          nextPageSize: currentPageSize
-        })
-        continue
-      }
-      logger.error(
-        'Stage 2: failed to fetch chunks',
-        error instanceof Error ? error : new Error(String(error)),
-        { documentId }
-      )
+    if (allChunks.length === 0) {
       return []
     }
 
-    if (!data || data.length === 0) {
-      break
-    }
-
-    const sanitized = data
-      .filter(record => typeof record.chunk_index === 'number')
-      .map(record => ({
-        chunk_index: record.chunk_index as number,
-        page_number: typeof record.page_number === 'number' ? record.page_number : null,
-        embedding: record.embedding,
-        chunk_text: record.chunk_text,
-        token_count: typeof record.token_count === 'number' ? record.token_count : null
-      }))
-
-    allChunks.push(...sanitized)
-    start += data.length
-    currentPageSize = defaultPageSize
-
-    if (data.length < pageSizeUsed) {
-      break
-    }
-  }
-
-  if (allChunks.length === 0) {
-    return []
-  }
-
-  // CRITICAL: Deduplicate chunks by chunk_index (some documents have duplicates)
-  const seen = new Set<number>()
-  const uniqueChunks = allChunks.reduce<Array<{
-    chunk_index: number
-    page_number: number | null
-    embedding: number[] | string
-    chunk_text: string | null
-    token_count: number | null
-  }>>((acc, chunk) => {
-    if (typeof chunk.chunk_index !== 'number') {
+    // CRITICAL: Deduplicate chunks by chunk_index (some documents have duplicates)
+    const seen = new Set<number>()
+    const uniqueChunks = allChunks.reduce<Array<{
+      chunk_index: number
+      page_number: number | null
+      embedding: number[] | string
+      chunk_text: string | null
+      token_count: number | null
+    }>>((acc, chunk) => {
+      if (typeof chunk.chunk_index !== 'number') {
+        return acc
+      }
+      if (seen.has(chunk.chunk_index)) {
+        return acc
+      }
+      seen.add(chunk.chunk_index)
+      acc.push({
+        chunk_index: chunk.chunk_index,
+        page_number: typeof chunk.page_number === 'number' ? chunk.page_number : null,
+        embedding: chunk.embedding,
+        chunk_text: typeof chunk.chunk_text === 'string' ? chunk.chunk_text : null,
+        token_count: typeof chunk.token_count === 'number' ? chunk.token_count : null
+      })
       return acc
-    }
-    if (seen.has(chunk.chunk_index)) {
-      return acc
-    }
-    seen.add(chunk.chunk_index)
-    acc.push({
-      chunk_index: chunk.chunk_index,
-      page_number: typeof chunk.page_number === 'number' ? chunk.page_number : null,
-      embedding: chunk.embedding,
-      chunk_text: typeof chunk.chunk_text === 'string' ? chunk.chunk_text : null,
-      token_count: typeof chunk.token_count === 'number' ? chunk.token_count : null
+    }, [])
+
+    logger.info('Stage 2: fetched candidate chunks', {
+      documentId,
+      totalChunks: allChunks.length,
+      uniqueChunks: uniqueChunks.length
     })
-    return acc
-  }, [])
 
-  logger.info('Stage 2: fetched candidate chunks', {
-    documentId,
-    totalChunks: allChunks.length,
-    uniqueChunks: uniqueChunks.length
-  })
+    const normalizedChunks: Chunk[] = []
 
-  const normalizedChunks: Chunk[] = []
+    for (const chunk of uniqueChunks) {
+      let embeddingValue: unknown = chunk.embedding
 
-  for (const chunk of uniqueChunks) {
-    let embeddingValue: unknown = chunk.embedding
+      if (typeof embeddingValue === 'string') {
+        try {
+          embeddingValue = JSON.parse(embeddingValue)
+        } catch (parseError) {
+          logger.error(
+            'Stage 2: failed to parse chunk embedding',
+            parseError instanceof Error ? parseError : new Error(String(parseError)),
+            { documentId, chunkIndex: chunk.chunk_index }
+          )
+          continue
+        }
+      }
 
-    if (typeof embeddingValue === 'string') {
-      try {
-        embeddingValue = JSON.parse(embeddingValue)
-      } catch (parseError) {
+      if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
         logger.error(
-          'Stage 2: failed to parse chunk embedding',
-          parseError instanceof Error ? parseError : new Error(String(parseError)),
+          'Stage 2: chunk embedding is not a numeric array',
+          undefined,
           { documentId, chunkIndex: chunk.chunk_index }
         )
         continue
       }
+
+      // Calculate token count (use stored value or estimate from text)
+      let tokenCount: number
+      if (typeof chunk.token_count === 'number' && chunk.token_count > 0) {
+        tokenCount = chunk.token_count
+      } else if (chunk.chunk_text) {
+        // Fallback: estimate tokens as text.length / 4
+        tokenCount = Math.ceil(chunk.chunk_text.length / 4)
+      } else {
+        // Last resort: assume minimum token count
+        tokenCount = 1
+      }
+
+      normalizedChunks.push({
+        id: `${documentId}_chunk_${chunk.chunk_index}`,
+        index: chunk.chunk_index,
+        pageNumber: chunk.page_number || 1,
+        embedding: embeddingValue as number[],
+        text: chunk.chunk_text ?? undefined,
+        tokenCount
+      })
     }
 
-    if (!Array.isArray(embeddingValue) || !embeddingValue.every(value => typeof value === 'number')) {
-      logger.error(
-        'Stage 2: chunk embedding is not a numeric array',
-        undefined,
-        { documentId, chunkIndex: chunk.chunk_index }
-      )
-      continue
+    if (normalizedChunks.length === 0) {
+      logger.warn('Stage 2: no valid chunk embeddings after parsing', { documentId })
+      return []
     }
 
-    // Calculate token count (use stored value or estimate from text)
-    let tokenCount: number
-    if (typeof chunk.token_count === 'number' && chunk.token_count > 0) {
-      tokenCount = chunk.token_count
-    } else if (chunk.chunk_text) {
-      // Fallback: estimate tokens as text.length / 4
-      tokenCount = Math.ceil(chunk.chunk_text.length / 4)
-    } else {
-      // Last resort: assume minimum token count
-      tokenCount = 1
-    }
-
-    normalizedChunks.push({
-      id: `${documentId}_chunk_${chunk.chunk_index}`,
-      index: chunk.chunk_index,
-      pageNumber: chunk.page_number || 1,
-      embedding: embeddingValue as number[],
-      text: chunk.chunk_text ?? undefined,
-      tokenCount
-    })
+    return normalizedChunks
+  } finally {
+    releaseServiceClient(supabase)
   }
-
-  if (normalizedChunks.length === 0) {
-    logger.warn('Stage 2: no valid chunk embeddings after parsing', { documentId })
-    return []
-  }
-
-  return normalizedChunks
 }
 
 /**
@@ -516,16 +519,19 @@ async function fetchDocumentChunks(
  */
 async function fetchDocumentMetadata(documentId: string): Promise<Stage2DocumentRecord> {
   const supabase = await createServiceClient()
+  try {
+    const { data: doc, error } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', documentId)
+      .single()
 
-  const { data: doc, error } = await supabase
-    .from('documents')
-    .select('*')
-    .eq('id', documentId)
-    .single()
+    if (error || !doc) {
+      throw new Error(`Document not found: ${documentId}`)
+    }
 
-  if (error || !doc) {
-    throw new Error(`Document not found: ${documentId}`)
+    return doc as Stage2DocumentRecord
+  } finally {
+    releaseServiceClient(supabase)
   }
-
-  return doc as Stage2DocumentRecord
 }
