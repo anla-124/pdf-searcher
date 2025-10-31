@@ -27,8 +27,8 @@ import { formatUploadDate } from '@/lib/date-utils'
 interface SimilarityScores {
   sourceScore: number
   targetScore: number
-  matchedSourceTokens: number
-  matchedTargetTokens: number
+  matchedSourceCharacters: number
+  matchedTargetCharacters: number
   explanation: string
   lengthRatio?: number | null
 }
@@ -86,8 +86,8 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
     const targetDiff = a.scores.targetScore - b.scores.targetScore
     if (Math.abs(targetDiff) > tolerance) return targetDiff
 
-    const matchedTokenDiff = a.scores.matchedTargetTokens - b.scores.matchedTargetTokens
-    if (matchedTokenDiff !== 0) return matchedTokenDiff
+    const matchedCharDiff = a.scores.matchedTargetCharacters - b.scores.matchedTargetCharacters
+    if (matchedCharDiff !== 0) return matchedCharDiff
 
     const uploadDiff = getCreatedAtTime(a.document) - getCreatedAtTime(b.document)
     if (uploadDiff !== 0) return uploadDiff

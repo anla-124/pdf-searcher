@@ -22,7 +22,7 @@ export interface Chunk {
   text: string
   pageNumber: number
   chunkIndex: number
-  tokenCount: number
+  characterCount: number
 }
 
 /**
@@ -197,10 +197,10 @@ export function removeFootnotes(paragraphs: Paragraph[]): Paragraph[] {
 /**
  * Merge form option paragraphs with their parent paragraph
  * Looks ahead and behind to handle noise paragraphs between question and options
- * IMPORTANT: Never creates paragraphs exceeding maxTokens to prevent oversized chunks
+ * IMPORTANT: Never creates paragraphs exceeding maxCharacters to prevent oversized chunks
  * Example: [{text: "Is X?"}, {text: "2.1"}, {text: "Yes No"}] → [{text: "Is X? Yes No"}, {text: "2.1"}]
  */
-export function mergeFormOptions(paragraphs: Paragraph[], maxTokens: number = 500): Paragraph[] {
+export function mergeFormOptions(paragraphs: Paragraph[], maxCharacters: number = 2000): Paragraph[] {
   const merged: Paragraph[] = []
   const formOptionIndices = new Set<number>()
 
@@ -241,15 +241,15 @@ export function mergeFormOptions(paragraphs: Paragraph[], maxTokens: number = 50
           m.index === paragraphs[questionIdx]!.index && m.pageNumber === paragraphs[questionIdx]!.pageNumber
         )
         if (questionInMerged) {
-          // Check if merging would exceed maxTokens
-          const questionTokens = countTokens(questionInMerged.text)
-          const optionTokens = countTokens(para.text)
-          if (questionTokens + optionTokens < maxTokens) {
+          // Check if merging would exceed maxCharacters
+          const questionChars = countCharacters(questionInMerged.text)
+          const optionChars = countCharacters(para.text)
+          if (questionChars + optionChars < maxCharacters) {
             // Safe to merge
             questionInMerged.text += ' ' + para.text
             continue // Skip adding this paragraph separately
           } else {
-            // Would exceed maxTokens - add form option as standalone paragraph
+            // Would exceed maxCharacters - add form option as standalone paragraph
             merged.push({ ...para })
             continue
           }
@@ -260,15 +260,15 @@ export function mergeFormOptions(paragraphs: Paragraph[], maxTokens: number = 50
       if (merged.length > 0) {
         const prev = merged[merged.length - 1]
         if (prev && prev.text.trim().length > 0) {
-          // Check if merging would exceed maxTokens
-          const prevTokens = countTokens(prev.text)
-          const optionTokens = countTokens(para.text)
-          if (prevTokens + optionTokens < maxTokens) {
+          // Check if merging would exceed maxCharacters
+          const prevChars = countCharacters(prev.text)
+          const optionChars = countCharacters(para.text)
+          if (prevChars + optionChars < maxCharacters) {
             // Safe to merge
             prev.text += ' ' + para.text
             continue
           } else {
-            // Would exceed maxTokens - add as standalone
+            // Would exceed maxCharacters - add as standalone
             merged.push({ ...para })
             continue
           }
@@ -284,20 +284,19 @@ export function mergeFormOptions(paragraphs: Paragraph[], maxTokens: number = 50
 }
 
 /**
- * Count tokens in text using character-based estimation
- * Industry standard: ~4 characters per token for English text
- * This is more accurate for legal text with punctuation, numbers, and special characters
+ * Count characters in text
+ * Returns the actual character count for accurate content volume measurement
  */
-export function countTokens(text: string): number {
-  return Math.ceil(text.trim().length / 4)
+export function countCharacters(text: string): number {
+  return text.trim().length
 }
 
 /**
  * Merge tiny paragraphs with adjacent paragraphs to create more substantial semantic units
- * Paragraphs with < minTokens are merged with their neighbors
- * IMPORTANT: Never creates paragraphs exceeding maxTokens to prevent oversized chunks
+ * Paragraphs with < minCharacters are merged with their neighbors
+ * IMPORTANT: Never creates paragraphs exceeding maxCharacters to prevent oversized chunks
  */
-export function mergeTinyParagraphs(paragraphs: Paragraph[], minTokens: number = 30, maxTokens: number = 500): Paragraph[] {
+export function mergeTinyParagraphs(paragraphs: Paragraph[], minCharacters: number = 120, maxCharacters: number = 2000): Paragraph[] {
   if (paragraphs.length === 0) return []
 
   const merged: Paragraph[] = []
@@ -307,31 +306,31 @@ export function mergeTinyParagraphs(paragraphs: Paragraph[], minTokens: number =
     const para = paragraphs[i]
     if (!para) continue
 
-    const tokens = countTokens(para.text)
+    const chars = countCharacters(para.text)
 
     // If this paragraph is tiny, try to accumulate it
-    if (tokens < minTokens) {
+    if (chars < minCharacters) {
       if (accumulated) {
-        // Check if merging with accumulated would exceed maxTokens
-        const accumulatedTokens = countTokens(accumulated.text)
-        if (accumulatedTokens + tokens < maxTokens) {
+        // Check if merging with accumulated would exceed maxCharacters
+        const accumulatedChars = countCharacters(accumulated.text)
+        if (accumulatedChars + chars < maxCharacters) {
           // Safe to merge with accumulated text
           accumulated.text += ' ' + para.text
         } else {
-          // Would exceed maxTokens, flush accumulated and start new
+          // Would exceed maxCharacters, flush accumulated and start new
           merged.push(accumulated)
           accumulated = { ...para }
         }
       } else if (merged.length > 0) {
-        // Check if merging with previous would exceed maxTokens
+        // Check if merging with previous would exceed maxCharacters
         const prev = merged[merged.length - 1]
         if (prev) {
-          const prevTokens = countTokens(prev.text)
-          if (prevTokens + tokens < maxTokens) {
+          const prevChars = countCharacters(prev.text)
+          if (prevChars + chars < maxCharacters) {
             // Safe to merge with previous paragraph
             prev.text += ' ' + para.text
           } else {
-            // Would exceed maxTokens, add as standalone
+            // Would exceed maxCharacters, add as standalone
             merged.push({ ...para })
           }
         }
@@ -342,16 +341,16 @@ export function mergeTinyParagraphs(paragraphs: Paragraph[], minTokens: number =
     } else {
       // This paragraph is substantial
       if (accumulated) {
-        // Check if merging accumulated with this paragraph would exceed maxTokens
-        const accumulatedTokens = countTokens(accumulated.text)
-        if (accumulatedTokens + tokens < maxTokens) {
+        // Check if merging accumulated with this paragraph would exceed maxCharacters
+        const accumulatedChars = countCharacters(accumulated.text)
+        if (accumulatedChars + chars < maxCharacters) {
           // Safe to merge accumulated text with this paragraph
           merged.push({
             ...para,
             text: accumulated.text + ' ' + para.text
           })
         } else {
-          // Would exceed maxTokens, add both separately
+          // Would exceed maxCharacters, add both separately
           merged.push(accumulated)
           merged.push({ ...para })
         }
@@ -367,13 +366,13 @@ export function mergeTinyParagraphs(paragraphs: Paragraph[], minTokens: number =
   if (accumulated && merged.length > 0) {
     const last = merged[merged.length - 1]
     if (last) {
-      const lastTokens = countTokens(last.text)
-      const accumulatedTokens = countTokens(accumulated.text)
-      if (lastTokens + accumulatedTokens < maxTokens) {
+      const lastChars = countCharacters(last.text)
+      const accumulatedChars = countCharacters(accumulated.text)
+      if (lastChars + accumulatedChars < maxCharacters) {
         // Safe to merge
         last.text += ' ' + accumulated.text
       } else {
-        // Would exceed maxTokens, add as standalone
+        // Would exceed maxCharacters, add as standalone
         merged.push(accumulated)
       }
     }
@@ -426,9 +425,9 @@ function isParagraphIncomplete(para: Paragraph, nextPara?: Paragraph): boolean {
 /**
  * Merge paragraphs that end mid-sentence with the following paragraph
  * This fixes Document AI's tendency to split paragraphs at page boundaries
- * IMPORTANT: Never creates paragraphs exceeding maxTokens to prevent oversized chunks
+ * IMPORTANT: Never creates paragraphs exceeding maxCharacters to prevent oversized chunks
  */
-export function mergeIncompleteParagraphs(paragraphs: Paragraph[], maxTokens: number = 500): Paragraph[] {
+export function mergeIncompleteParagraphs(paragraphs: Paragraph[], maxCharacters: number = 2000): Paragraph[] {
   if (paragraphs.length === 0) return []
 
   const merged: Paragraph[] = []
@@ -441,11 +440,11 @@ export function mergeIncompleteParagraphs(paragraphs: Paragraph[], maxTokens: nu
 
     // If this paragraph is incomplete and there's a next one, try to merge them
     if (nextPara && isParagraphIncomplete(para, nextPara)) {
-      // Check if merging would exceed maxTokens
-      const currentTokens = countTokens(para.text)
-      const nextTokens = countTokens(nextPara.text)
+      // Check if merging would exceed maxCharacters
+      const currentChars = countCharacters(para.text)
+      const nextChars = countCharacters(nextPara.text)
 
-      if (currentTokens + nextTokens < maxTokens) {
+      if (currentChars + nextChars < maxCharacters) {
         // Safe to merge current with next
         merged.push({
           ...para,
@@ -453,7 +452,7 @@ export function mergeIncompleteParagraphs(paragraphs: Paragraph[], maxTokens: nu
         })
         i++ // Skip the next paragraph since we merged it
       } else {
-        // Would exceed maxTokens - keep incomplete (better than oversized chunk)
+        // Would exceed maxCharacters - keep incomplete (better than oversized chunk)
         merged.push({ ...para })
       }
     } else {
@@ -467,15 +466,15 @@ export function mergeIncompleteParagraphs(paragraphs: Paragraph[], maxTokens: nu
 
 /**
  * Split oversized paragraphs into smaller ones at sentence boundaries
- * This ensures no paragraph exceeds maxTokens, preventing oversized chunks
+ * This ensures no paragraph exceeds maxCharacters, preventing oversized chunks
  */
-export function splitOversizedParagraphs(paragraphs: Paragraph[], maxTokens: number = 500): Paragraph[] {
+export function splitOversizedParagraphs(paragraphs: Paragraph[], maxCharacters: number = 2000): Paragraph[] {
   const result: Paragraph[] = []
 
   for (const para of paragraphs) {
-    const tokens = countTokens(para.text)
+    const chars = countCharacters(para.text)
 
-    if (tokens <= maxTokens) {
+    if (chars <= maxCharacters) {
       // Paragraph is fine, add as-is
       result.push(para)
     } else {
@@ -483,13 +482,13 @@ export function splitOversizedParagraphs(paragraphs: Paragraph[], maxTokens: num
       const sentences = splitIntoSentences(para.text)
 
       let currentText = ''
-      let currentTokens = 0
+      let currentChars = 0
 
       for (const sentence of sentences) {
-        const sentenceTokens = countTokens(sentence)
+        const sentenceChars = countCharacters(sentence)
 
-        // Check if adding this sentence would exceed maxTokens
-        if (currentTokens > 0 && currentTokens + sentenceTokens >= maxTokens) {
+        // Check if adding this sentence would exceed maxCharacters
+        if (currentChars > 0 && currentChars + sentenceChars >= maxCharacters) {
           // Save current accumulated text as a paragraph
           if (currentText.trim()) {
             result.push({
@@ -500,11 +499,11 @@ export function splitOversizedParagraphs(paragraphs: Paragraph[], maxTokens: num
           }
           // Start new paragraph with this sentence
           currentText = sentence
-          currentTokens = sentenceTokens
+          currentChars = sentenceChars
         } else {
           // Add sentence to current paragraph
           currentText += (currentText ? ' ' : '') + sentence
-          currentTokens += sentenceTokens
+          currentChars += sentenceChars
         }
       }
 
@@ -526,25 +525,25 @@ export function splitOversizedParagraphs(paragraphs: Paragraph[], maxTokens: num
  * Main chunking function: groups paragraphs into chunks using greedy algorithm
  *
  * Uses a simple greedy approach: keeps adding paragraphs to current chunk
- * until the next paragraph would exceed maxTokens. This guarantees:
+ * until the next paragraph would exceed maxCharacters. This guarantees:
  * - Zero overlap between chunks
- * - All chunks respect maxTokens limit
+ * - All chunks respect maxCharacters limit
  * - Natural adaptation to paragraph sizes (1-N paragraphs per chunk)
  *
  * @param paragraphs - Array of paragraphs to chunk
- * @param maxTokens - Maximum tokens per chunk (hard limit)
+ * @param maxCharacters - Maximum characters per chunk (hard limit)
  * @returns Array of chunks
  */
 export function chunkByParagraphs(
   paragraphs: Paragraph[],
-  maxTokens: number = 500
+  maxCharacters: number = 2000
 ): Chunk[] {
   // Step 1: Remove footnotes FIRST
   let filtered = removeFootnotes(paragraphs)
 
   // Step 2: Merge form options with parent paragraphs BEFORE noise filtering
   // This preserves "Yes/No/N/A" options that would otherwise be filtered as noise
-  filtered = mergeFormOptions(filtered, maxTokens)
+  filtered = mergeFormOptions(filtered, maxCharacters)
 
   // Step 3: NOW filter out noise paragraphs (after form options are safely merged)
   filtered = filtered.filter(para => !isNoiseParagraph(para.text))
@@ -559,15 +558,14 @@ export function chunkByParagraphs(
   filtered = filtered.filter(para => para.text.trim().length > 0)
 
   // Step 6: Merge incomplete paragraphs (mid-sentence cuts at page boundaries)
-  filtered = mergeIncompleteParagraphs(filtered, maxTokens)
+  filtered = mergeIncompleteParagraphs(filtered, maxCharacters)
 
   // Step 7: Merge tiny paragraphs with neighbors to create substantial semantic units
-  // Lower threshold to 20 and pass maxTokens to prevent creating oversized paragraphs
-  filtered = mergeTinyParagraphs(filtered, 20, maxTokens)
+  filtered = mergeTinyParagraphs(filtered, 80, maxCharacters)
 
   // Step 7.5: Split oversized paragraphs at sentence boundaries
-  // This guarantees no paragraph ever exceeds maxTokens (final safety net)
-  filtered = splitOversizedParagraphs(filtered, maxTokens)
+  // This guarantees no paragraph ever exceeds maxCharacters (final safety net)
+  filtered = splitOversizedParagraphs(filtered, maxCharacters)
 
   // Step 8: Group into chunks using simple greedy algorithm
   const chunks: Chunk[] = []
@@ -575,25 +573,25 @@ export function chunkByParagraphs(
 
   while (i < filtered.length) {
     const chunkParagraphs: Paragraph[] = []
-    let chunkTokens = 0
+    let chunkChars = 0
 
     // Greedy: keep adding paragraphs while they fit
     while (i < filtered.length) {
       const para = filtered[i]
       if (!para) break
 
-      const paraTokens = countTokens(para.text)
+      const paraChars = countCharacters(para.text)
 
       // Always start a chunk with at least one paragraph
       if (chunkParagraphs.length === 0) {
         chunkParagraphs.push(para)
-        chunkTokens = paraTokens
+        chunkChars = paraChars
         i++
       }
-      // Add more paragraphs if they fit under maxTokens
-      else if (chunkTokens + paraTokens <= maxTokens) {
+      // Add more paragraphs if they fit under maxCharacters
+      else if (chunkChars + paraChars <= maxCharacters) {
         chunkParagraphs.push(para)
-        chunkTokens += paraTokens
+        chunkChars += paraChars
         i++
       }
       // Next paragraph doesn't fit - finish this chunk
@@ -610,7 +608,7 @@ export function chunkByParagraphs(
         text: chunkText,
         pageNumber: chunkParagraphs[0]?.pageNumber ?? 1,
         chunkIndex: chunks.length,
-        tokenCount: chunkTokens
+        characterCount: chunkChars
       })
     }
   }

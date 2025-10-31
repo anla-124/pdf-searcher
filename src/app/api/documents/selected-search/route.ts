@@ -30,14 +30,14 @@ interface SimilarityResult {
     created_at: string
     updated_at: string
     metadata?: Record<string, unknown>
-    total_tokens?: number
+    total_characters?: number
   }
   score: number
   scores: {
     sourceScore: number
     targetScore: number
-    matchedSourceTokens: number
-    matchedTargetTokens: number
+    matchedSourceCharacters: number
+    matchedTargetCharacters: number
     lengthRatio: number | null
   }
   matching_chunks: Array<{ text: string; score: number }>
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     // Verify source document exists and belongs to user
     const { data: sourceDocument, error: sourceError } = await supabase
       .from('documents')
-      .select('id, title, status, centroid_embedding, effective_chunk_count, total_tokens')
+      .select('id, title, status, centroid_embedding, effective_chunk_count, total_characters')
       .eq('id', sourceDocumentId)
       .eq('user_id', user.id)
       .single()
@@ -93,8 +93,8 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const sourceTotalTokens = typeof sourceDocument.total_tokens === 'number' && Number.isFinite(sourceDocument.total_tokens)
-      ? sourceDocument.total_tokens
+    const sourceTotalCharacters = typeof sourceDocument.total_characters === 'number' && Number.isFinite(sourceDocument.total_characters)
+      ? sourceDocument.total_characters
       : null
 
     // Validate source document has required fields for similarity search
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
     // Verify all target documents exist and belong to user
     const { data: targetDocuments, error: targetError } = await supabase
       .from('documents')
-      .select('id, title, filename, file_size, file_path, content_type, status, page_count, created_at, updated_at, metadata, total_tokens')
+      .select('id, title, filename, file_size, file_path, content_type, status, page_count, created_at, updated_at, metadata, total_characters')
       .in('id', targetDocumentIds)
       .eq('user_id', user.id)
 
@@ -150,16 +150,16 @@ export async function POST(request: NextRequest) {
     // Format results to match expected interface
     const formattedResults: SimilarityResult[] = searchResult.results.map(result => {
       const targetDoc = targetDocuments.find(doc => doc.id === result.document.id)
-      const targetTotalTokensFromResult = typeof result.document.total_tokens === 'number' && Number.isFinite(result.document.total_tokens)
-        ? result.document.total_tokens
+      const targetTotalCharactersFromResult = typeof result.document.total_characters === 'number' && Number.isFinite(result.document.total_characters)
+        ? result.document.total_characters
         : null
-      const targetTotalTokensFromDb = typeof targetDoc?.total_tokens === 'number' && Number.isFinite(targetDoc.total_tokens as number)
-        ? (targetDoc?.total_tokens as number)
+      const targetTotalCharactersFromDb = typeof targetDoc?.total_characters === 'number' && Number.isFinite(targetDoc.total_characters as number)
+        ? (targetDoc?.total_characters as number)
         : null
-      const targetTotalTokens = targetTotalTokensFromResult ?? targetTotalTokensFromDb
+      const targetTotalCharacters = targetTotalCharactersFromResult ?? targetTotalCharactersFromDb
 
-      const lengthRatio = sourceTotalTokens && targetTotalTokens
-        ? (sourceTotalTokens / targetTotalTokens) * 100
+      const lengthRatio = sourceTotalCharacters && targetTotalCharacters
+        ? (sourceTotalCharacters / targetTotalCharacters) * 100
         : null
 
       return {
@@ -176,14 +176,14 @@ export async function POST(request: NextRequest) {
           created_at: (targetDoc?.created_at as string) || new Date().toISOString(),
           updated_at: (targetDoc?.updated_at as string) || new Date().toISOString(),
           metadata: targetDoc?.metadata as Record<string, unknown> | undefined,
-          total_tokens: targetTotalTokens ?? undefined
+          total_characters: targetTotalCharacters ?? undefined
         },
         score: result.scores.sourceScore,
         scores: {
           sourceScore: result.scores.sourceScore,
           targetScore: result.scores.targetScore,
-          matchedSourceTokens: result.scores.matchedSourceTokens,
-          matchedTargetTokens: result.scores.matchedTargetTokens,
+          matchedSourceCharacters: result.scores.matchedSourceCharacters,
+          matchedTargetCharacters: result.scores.matchedTargetCharacters,
           lengthRatio
         },
         matching_chunks: result.sections.map(section => ({
@@ -198,11 +198,11 @@ export async function POST(request: NextRequest) {
     const missingDocs = targetDocuments.filter(doc => !resultsDocIds.has(doc.id as string))
 
     for (const doc of missingDocs) {
-      const missingTargetTokens = typeof doc.total_tokens === 'number' && Number.isFinite(doc.total_tokens)
-        ? doc.total_tokens
+      const missingTargetCharacters = typeof doc.total_characters === 'number' && Number.isFinite(doc.total_characters)
+        ? doc.total_characters
         : null
-      const lengthRatio = sourceTotalTokens && missingTargetTokens
-        ? (sourceTotalTokens / missingTargetTokens) * 100
+      const lengthRatio = sourceTotalCharacters && missingTargetCharacters
+        ? (sourceTotalCharacters / missingTargetCharacters) * 100
         : null
       formattedResults.push({
         document: {
@@ -218,14 +218,14 @@ export async function POST(request: NextRequest) {
           created_at: doc.created_at as string,
           updated_at: doc.updated_at as string,
           metadata: doc.metadata as Record<string, unknown> | undefined,
-          total_tokens: missingTargetTokens ?? undefined
+          total_characters: missingTargetCharacters ?? undefined
         },
         score: 0,
         scores: {
           sourceScore: 0,
           targetScore: 0,
-          matchedSourceTokens: 0,
-          matchedTargetTokens: 0,
+          matchedSourceCharacters: 0,
+          matchedTargetCharacters: 0,
           lengthRatio
         },
         matching_chunks: []

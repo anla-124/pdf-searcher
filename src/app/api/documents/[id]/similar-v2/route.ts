@@ -257,7 +257,7 @@ export async function POST(
     // Verify document exists and belongs to user
     const { data: document, error: docError } = await supabase
       .from('documents')
-      .select('id, title, status, centroid_embedding, effective_chunk_count, page_count, total_tokens')
+      .select('id, title, status, centroid_embedding, effective_chunk_count, page_count, total_characters')
       .eq('id', id)
       .eq('user_id', user.id)
       .single()
@@ -327,8 +327,8 @@ export async function POST(
       sourcePageRange: sanitizedPageRange
     })
 
-    const sourceTotalTokens = typeof document.total_tokens === 'number' && Number.isFinite(document.total_tokens)
-      ? document.total_tokens
+    const sourceTotalCharacters = typeof document.total_characters === 'number' && Number.isFinite(document.total_characters)
+      ? document.total_characters
       : null
 
     const filteredResults = searchResult.results.filter(result =>
@@ -337,16 +337,16 @@ export async function POST(
     )
 
     const enrichedResults = filteredResults.map(result => {
-      const targetTotalTokensFromResult = typeof result.document.total_tokens === 'number' && Number.isFinite(result.document.total_tokens as number)
-        ? (result.document.total_tokens as number)
+      const targetTotalCharactersFromResult = typeof result.document.total_characters === 'number' && Number.isFinite(result.document.total_characters as number)
+        ? (result.document.total_characters as number)
         : null
-      const targetTotalTokensFromEffective = typeof result.document.effective_chunk_count === 'number' && Number.isFinite(result.document.effective_chunk_count as number)
+      const targetTotalCharactersFromEffective = typeof result.document.effective_chunk_count === 'number' && Number.isFinite(result.document.effective_chunk_count as number)
         ? (result.document.effective_chunk_count as number)
         : null
-      const targetTotalTokens = targetTotalTokensFromResult ?? targetTotalTokensFromEffective
+      const targetTotalCharacters = targetTotalCharactersFromResult ?? targetTotalCharactersFromEffective
 
-      const lengthRatio = sourceTotalTokens && targetTotalTokens
-        ? (sourceTotalTokens / targetTotalTokens) * 100
+      const lengthRatio = sourceTotalCharacters && targetTotalCharacters
+        ? (sourceTotalCharacters / targetTotalCharacters) * 100
         : null
 
       return {
@@ -462,7 +462,7 @@ export async function GET(
     // Verify document belongs to user
     const { data: document, error: docError } = await supabase
       .from('documents')
-      .select('id, title, status, total_tokens')
+      .select('id, title, status, total_characters')
       .eq('id', id)
       .eq('user_id', user.id)
       .single()

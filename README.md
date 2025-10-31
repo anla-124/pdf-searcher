@@ -73,8 +73,8 @@ Copy the template that matches your target environment to `.env.local`, then pop
 - **Pinecone cleanup worker:** Document deletions enqueue background vector cleanup with exponential backoff. Tune `PINECONE_DELETE_MAX_RETRIES` and `PINECONE_DELETE_BACKOFF_MS` as needed.
 - **Health monitoring:** `GET /api/health/pool` reports Supabase pool metrics, throttling state, and Pinecone cleanup queue depth so you can keep an eye on resource pressure.
 - **Similarity worker cap:** `SIMILARITY_STAGE2_WORKERS` controls how many Stage 2 scoring jobs can run in parallel (defaults to 1 for free tier); raise it alongside Supabase pool limits on higher plans.
-- **Directional reuse metrics:** Stage 2 reports `sourceScore` / `targetScore` as the percentage of each document whose content appears in the other (duplicate tokens in the target are counted for transparency).
-- **Length ratio:** The similarity cards also display `Length Ratio`, which is the source document’s token count divided by the target document’s token count (e.g., `0.50` means the source is half the size of the target). This helps flag size mismatches even when reuse percentages are high.
+- **Directional reuse metrics:** Stage 2 reports `sourceScore` / `targetScore` as the percentage of each document whose content appears in the other (based on character counts for accurate measurement).
+- **Length ratio:** The similarity cards also display `Length Ratio`, which is the source document's character count divided by the target document's character count (e.g., `0.50` means the source is half the size of the target). This helps flag size mismatches even when reuse percentages are high.
 
 ### Similarity Search Pipeline
 
@@ -89,17 +89,17 @@ The production similarity endpoint (`/api/documents/[id]/similar-v2`) and the Se
    - For each source chunk, performs a fast ANN search across candidate chunks to narrow the list.  
    - Skipped automatically when the candidate pool is already small.
 
-3. **Stage 2 – Adaptive scoring with sections**  
-   - Fetches the full chunk sets for each candidate, respecting manual exclusions such as subscription agreement skip ranges.  
-   - Performs bidirectional matching with non-max suppression and minimum evidence thresholds.  
-   - Computes token-based scores using `computeAdaptiveScore`, returning:  
-     - `sourceScore`: fraction of source tokens matched.  
-     - `targetScore`: fraction of target tokens matched.  
-     - `matchedSourceTokens` / `matchedTargetTokens`.  
-     - `lengthRatio`: source tokens ÷ target tokens.  
+3. **Stage 2 – Adaptive scoring with sections**
+   - Fetches the full chunk sets for each candidate, respecting manual exclusions such as subscription agreement skip ranges.
+   - Performs bidirectional matching with non-max suppression and minimum evidence thresholds.
+   - Computes character-based scores using `computeAdaptiveScore`, returning:
+     - `sourceScore`: fraction of source characters matched.
+     - `targetScore`: fraction of target characters matched.
+     - `matchedSourceCharacters` / `matchedTargetCharacters`.
+     - `lengthRatio`: source characters ÷ target characters.
    - Groups matches into sections (page ranges) for easier inspection.
 
-Results are sorted by `sourceScore`, then `targetScore`, then matched target tokens, followed by upload date and title. General Search returns the default Top 30; Selected Search filters the candidate list to the user-chosen targets and highlights the new Length Ratio metric.
+Results are sorted by `sourceScore`, then `targetScore`, then matched target characters, followed by upload date and title. General Search returns the default Top 30; Selected Search filters the candidate list to the user-chosen targets and highlights the new Length Ratio metric.
 
 ### Running the Development Server
 

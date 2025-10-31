@@ -11,18 +11,18 @@ import { SmartRetry, RetryConfigs, circuitBreakers } from '@/lib/retry-logic'
 import { logger, measurePerformance, withRequestContext } from '@/lib/logger'
 import { analyzeDocumentSize, estimateProcessingTime, requiresSpecialHandling, type DocumentSizeAnalysis } from '@/lib/document-size-strategies'
 import { DatabaseDocumentWithContent } from '@/types/external-apis'
-import { DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP, SENTENCES_PER_CHUNK, SENTENCE_OVERLAP, MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS } from '@/lib/constants/chunking'
-import { chunkByParagraphs, countTokens, type Paragraph } from '@/lib/chunking/paragraph-chunker'
+import { DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP, SENTENCES_PER_CHUNK, SENTENCE_OVERLAP, MIN_CHUNK_CHARACTERS, MAX_CHUNK_CHARACTERS } from '@/lib/constants/chunking'
+import { chunkByParagraphs, countCharacters, type Paragraph } from '@/lib/chunking/paragraph-chunker'
 import { chunkBySentences } from '@/lib/chunking/sentence-chunker'
 import type { GenericSupabaseSchema } from '@/types/supabase'
 import { saveDocumentAIResponse } from '@/lib/debug-document-ai'
 import { queuePineconeDeletion } from '@/lib/pinecone-cleanup-worker'
 
 // Processing pipeline fingerprint - increment when major changes are made
-const PROCESSING_PIPELINE_VERSION = '4.5.0' // FIX: Simple greedy chunking algorithm - zero overlap, strict token limits
+const PROCESSING_PIPELINE_VERSION = '5.0.0'
 const PROCESSING_FEATURES = {
   pageNumbering: 'sequential-fallback',       // Uses pageIndex+1 as fallback
-  chunkingStrategy: 'paragraph-semantic-v9',  // Greedy: zero overlap, strict maxTokens enforcement, adaptive paragraph count
+  chunkingStrategy: 'paragraph-semantic-v10', // Character-based, zero overlap, strict maxCharacters enforcement
   embeddingRetry: 'unlimited-v1',             // Unlimited retry logic
   structuredLogging: 'winston-pino-v1'        // Structured logging system
 }
@@ -994,7 +994,7 @@ async function processChunkWithRetry(
                 chunk_text: pagedChunk.text,
                 chunk_index: pagedChunk.chunkIndex,
                 page_number: pagedChunk.pageNumber,
-                token_count: pagedChunk.tokenCount,
+                character_count: pagedChunk.characterCount,
               },
               {
                 onConflict: 'document_id,chunk_index'
@@ -1641,7 +1641,7 @@ interface PagedChunk {
   text: string
   chunkIndex: number
   pageNumber: number
-  tokenCount: number
+  characterCount: number
 }
 
 // Extract text page by page from Document AI result
@@ -1787,8 +1787,8 @@ function splitTextIntoPagedChunks(
     fullText,
     SENTENCES_PER_CHUNK,
     overlap,
-    MIN_CHUNK_TOKENS,
-    MAX_CHUNK_TOKENS
+    MIN_CHUNK_CHARACTERS,
+    MAX_CHUNK_CHARACTERS
   )
 
   // Assign page numbers to chunks based on where they appear in the text
@@ -1807,14 +1807,14 @@ function splitTextIntoPagedChunks(
       ? (charToPage[chunkStartIndex] ?? 1)
       : (pagesText[0]?.pageNumber ?? 1)
 
-    // Calculate token count for this chunk
-    const tokenCount = countTokens(chunkText)
+    // Calculate character count for this chunk
+    const characterCount = countCharacters(chunkText)
 
     pagedChunks.push({
       text: chunkText,
       chunkIndex: i,
       pageNumber: pageNumber,
-      tokenCount
+      characterCount
     })
 
     // Move current position forward (avoid re-finding the same chunk)
@@ -1834,7 +1834,7 @@ function splitParagraphsIntoChunks(paragraphs: Paragraph[]): PagedChunk[] {
   // Use paragraph-based chunking with greedy algorithm
   const chunks = chunkByParagraphs(
     paragraphs,
-    MAX_CHUNK_TOKENS
+    MAX_CHUNK_CHARACTERS
   )
 
   // Convert to PagedChunk format
@@ -1842,7 +1842,7 @@ function splitParagraphsIntoChunks(paragraphs: Paragraph[]): PagedChunk[] {
     text: chunk.text,
     chunkIndex: chunk.chunkIndex,
     pageNumber: chunk.pageNumber,
-    tokenCount: chunk.tokenCount
+    characterCount: chunk.characterCount
   }))
 }
 
@@ -1990,7 +1990,7 @@ export async function computeAndStoreCentroid(
     // IMPORTANT: Add explicit limit to avoid Supabase default row limits
     const { data: allEmbeddings, error: fetchError } = await supabase
       .from('document_embeddings')
-      .select('chunk_index, embedding, chunk_text, token_count')
+      .select('chunk_index, embedding, chunk_text, character_count')
       .eq('document_id', documentId)
       .order('chunk_index', { ascending: true })
       .limit(100000) // Support very large documents
@@ -2012,7 +2012,7 @@ export async function computeAndStoreCentroid(
       chunk_index: number
       embedding: string | number[]
       chunk_text: string | null
-      token_count: number | null
+      character_count: number | null
     }>>((acc, record) => {
       if (typeof record.chunk_index !== 'number') {
         return acc
@@ -2025,7 +2025,7 @@ export async function computeAndStoreCentroid(
         chunk_index: record.chunk_index,
         embedding: record.embedding as string | number[],
         chunk_text: typeof record.chunk_text === 'string' ? record.chunk_text : null,
-        token_count: typeof record.token_count === 'number' ? record.token_count : null
+        character_count: typeof record.character_count === 'number' ? record.character_count : null
       })
       return acc
     }, [])
@@ -2150,15 +2150,15 @@ export async function computeAndStoreCentroid(
     // This represents what's actually indexed and searchable
     const actualChunkCount = embeddingVectors.length
 
-    // 5. Calculate total tokens from all chunks
-    // Use token_count from database for accurate content volume tracking
-    const totalTokens = embeddings.reduce((sum, e) => {
-      if (typeof e.token_count === 'number' && e.token_count > 0) {
-        return sum + e.token_count
+    // 5. Calculate total characters from all chunks
+    // Use character_count from database for accurate content volume tracking
+    const totalCharacters = embeddings.reduce((sum, e) => {
+      if (typeof e.character_count === 'number' && e.character_count > 0) {
+        return sum + e.character_count
       }
-      // Fallback: estimate from chunk_text if token_count is missing
+      // Fallback: calculate from chunk_text if character_count is missing
       if (e.chunk_text) {
-        return sum + countTokens(e.chunk_text)
+        return sum + countCharacters(e.chunk_text)
       }
       return sum
     }, 0)
@@ -2166,18 +2166,18 @@ export async function computeAndStoreCentroid(
     logger.info('Centroid computed successfully', {
       documentId,
       actualChunkCount,
-      totalTokens,
+      totalCharacters,
       component: 'document-processing'
     })
 
-    // 6. Update documents table with centroid, effective_chunk_count, and total_tokens
+    // 6. Update documents table with centroid, effective_chunk_count, and total_characters
     // IMPORTANT: effective_chunk_count should equal actual chunks indexed
     const { error: updateError } = await supabase
       .from('documents')
       .update({
         centroid_embedding: normalizedCentroid,
         effective_chunk_count: actualChunkCount,  // Use actual count, not theoretical
-        total_tokens: totalTokens,
+        total_characters: totalCharacters,
         embedding_model: 'text-embedding-004'
       })
       .eq('id', documentId)
@@ -2191,10 +2191,10 @@ export async function computeAndStoreCentroid(
       return
     }
 
-    logger.info('Centroid, effective chunk count, and total tokens stored successfully', {
+    logger.info('Centroid, effective chunk count, and total characters stored successfully', {
       documentId,
       effectiveChunkCount: actualChunkCount,
-      totalTokens,
+      totalCharacters,
       component: 'document-processing'
     })
 
@@ -2405,7 +2405,7 @@ async function generateEmbeddingsFromPages(
 /**
  * Split text into chunks using sentence-based chunking
  * Note: chunkSize and overlap parameters are kept for backward compatibility but are ignored
- * The new implementation uses sentence-based chunking with configurable sentence count and token limits
+ * The new implementation uses sentence-based chunking with configurable sentence count and character limits
  */
 export function splitTextIntoChunks(
   text: string,
@@ -2417,8 +2417,8 @@ export function splitTextIntoChunks(
     text,
     SENTENCES_PER_CHUNK,
     SENTENCE_OVERLAP,
-    MIN_CHUNK_TOKENS,
-    MAX_CHUNK_TOKENS
+    MIN_CHUNK_CHARACTERS,
+    MAX_CHUNK_CHARACTERS
   )
 }
 

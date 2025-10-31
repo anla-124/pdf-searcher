@@ -26,7 +26,7 @@ type Stage2DocumentRecord = {
   filename?: string | null
   page_count?: number | null
   effective_chunk_count: number | null
-  total_tokens: number | null
+  total_characters: number | null
   [key: string]: unknown
 }
 
@@ -63,9 +63,9 @@ export async function stage2FinalScoring(
       threshold
     })
 
-    // 1. Validate source document has total_tokens
-    if (sourceDoc.total_tokens == null || sourceDoc.total_tokens <= 0) {
-      logger.warn('Stage 2: source document missing total_tokens; deriving from chunk data', {
+    // 1. Validate source document has total_characters
+    if (sourceDoc.total_characters == null || sourceDoc.total_characters <= 0) {
+      logger.warn('Stage 2: source document missing total_characters; deriving from chunk data', {
         sourceDocId: sourceDoc.id
       })
     }
@@ -82,11 +82,11 @@ export async function stage2FinalScoring(
       throw new Error(`No chunks found for source document ${sourceDoc.id}`)
     }
 
-    const sourceTotalTokens = sourceChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
+    const sourceTotalCharacters = sourceChunks.reduce((sum, chunk) => sum + chunk.characterCount, 0)
 
-    if (sourceTotalTokens <= 0) {
+    if (sourceTotalCharacters <= 0) {
       throw new Error(
-        `Source document ${sourceDoc.id} has no tokenized content in the selected scope`
+        `Source document ${sourceDoc.id} has no character content in the selected scope`
       )
     }
 
@@ -95,7 +95,7 @@ export async function stage2FinalScoring(
     logger.info('Stage 2: loaded source chunks', {
       candidateCount: candidateIds.length,
       sourceChunkCount: sourceChunks.length,
-      sourceTotalTokens,
+      sourceTotalCharacters,
       effectiveChunkCount
     })
 
@@ -114,7 +114,7 @@ export async function stage2FinalScoring(
     }
 
     const batchPromises = batches.map(batch =>
-      processBatch(batch, sourceDoc, sourceChunks, matchOptions, timeout, sourceTotalTokens)
+      processBatch(batch, sourceDoc, sourceChunks, matchOptions, timeout, sourceTotalCharacters)
     )
 
     const batchResults = await Promise.all(batchPromises)
@@ -132,9 +132,9 @@ export async function stage2FinalScoring(
       if (Math.abs(a.scores.targetScore - b.scores.targetScore) > 0.01) {
         return b.scores.targetScore - a.scores.targetScore
       }
-      // 3. Tie-break by matched target tokens (higher reuse)
-      if (a.scores.matchedTargetTokens !== b.scores.matchedTargetTokens) {
-        return b.scores.matchedTargetTokens - a.scores.matchedTargetTokens
+      // 3. Tie-break by matched target characters (higher reuse)
+      if (a.scores.matchedTargetCharacters !== b.scores.matchedTargetCharacters) {
+        return b.scores.matchedTargetCharacters - a.scores.matchedTargetCharacters
       }
       // 4. Final tie-break: More matched chunks
       return b.matchedChunks - a.matchedChunks
@@ -174,7 +174,7 @@ async function processBatch(
     fallbackEnabled: boolean
   },
   timeout: number,
-  sourceTotalTokens: number
+  sourceTotalCharacters: number
 ): Promise<(SimilarityResult | null)[]> {
 
   const results: (SimilarityResult | null)[] = []
@@ -185,7 +185,7 @@ async function processBatch(
       let timeoutId: NodeJS.Timeout | null = null
 
       const result = await Promise.race([
-        processCandidate(candidateId, sourceDoc, sourceChunks, matchOptions, sourceTotalTokens).then(result => {
+        processCandidate(candidateId, sourceDoc, sourceChunks, matchOptions, sourceTotalCharacters).then(result => {
           // Clear timeout if processing completes successfully
           if (timeoutId) clearTimeout(timeoutId)
           return result
@@ -228,7 +228,7 @@ async function processCandidate(
     fallbackThreshold?: number
     fallbackEnabled: boolean
   },
-  sourceTotalTokens: number
+  sourceTotalCharacters: number
 ): Promise<SimilarityResult | null> {
 
   // 1. Fetch candidate chunks and metadata
@@ -242,18 +242,18 @@ async function processCandidate(
     return null
   }
 
-  const candidateTotalTokens = candidateMetadata.total_tokens
+  const candidateTotalCharacters = candidateMetadata.total_characters
   const effectiveChunkCount = candidateMetadata.effective_chunk_count
 
-  if (candidateTotalTokens == null || candidateTotalTokens <= 0) {
-    logger.warn('Stage 2: candidate missing total_tokens (required for token-based similarity)', { candidateId })
+  if (candidateTotalCharacters == null || candidateTotalCharacters <= 0) {
+    logger.warn('Stage 2: candidate missing total_characters (required for character-based similarity)', { candidateId })
     return null
   }
 
   logger.info('Stage 2: candidate chunk summary', {
     candidateId,
     chunkCount: candidateChunks.length,
-    totalTokens: candidateTotalTokens,
+    totalCharacters: candidateTotalCharacters,
     effectiveChunkCount
   })
 
@@ -276,19 +276,19 @@ async function processCandidate(
     return null
   }
 
-  // 3. Adaptive scoring (CRITICAL: Use total_tokens for accurate content-based similarity!)
-  // Token-based metrics eliminate chunking artifacts and provide accurate similarity percentages
-  logger.debug('Stage 2: computing token-based score for candidate', {
+  // 3. Adaptive scoring (CRITICAL: Use total_characters for accurate content-based similarity!)
+  // Character-based metrics eliminate chunking artifacts and provide accurate similarity percentages
+  logger.debug('Stage 2: computing character-based score for candidate', {
     candidateId,
-    sourceTotalTokens,
-    candidateTotalTokens,
+    sourceTotalCharacters,
+    candidateTotalCharacters,
     matchedPairs: matches.length
   })
 
   const scores = computeAdaptiveScore(
     matches,
-    sourceTotalTokens,
-    candidateTotalTokens
+    sourceTotalCharacters,
+    candidateTotalCharacters
   )
 
   // 4. Section detection
@@ -309,7 +309,7 @@ async function processCandidate(
     page_count: typeof candidateMetadata.page_count === 'number'
       ? candidateMetadata.page_count
       : undefined,
-    effective_chunk_count: candidateTotalTokens  // Use total_tokens as the definitive measure
+    effective_chunk_count: candidateTotalCharacters  // Use total_characters as the definitive measure
   }
 
   const result = {
@@ -323,8 +323,8 @@ async function processCandidate(
     candidateId,
     sourceScore: scores.sourceScore,
     targetScore: scores.targetScore,
-    matchedSourceTokens: scores.matchedSourceTokens,
-    matchedTargetTokens: scores.matchedTargetTokens,
+    matchedSourceCharacters: scores.matchedSourceCharacters,
+    matchedTargetCharacters: scores.matchedTargetCharacters,
     matchedChunks: matches.length
   })
 
@@ -349,7 +349,7 @@ async function fetchDocumentChunks(
       page_number: number | null
       embedding: number[] | string
       chunk_text: string | null
-      token_count: number | null
+      character_count: number | null
     }[] = []
 
     while (true) {
@@ -358,7 +358,7 @@ async function fetchDocumentChunks(
 
       let query = supabase
         .from('document_embeddings')
-        .select('chunk_index, page_number, embedding, chunk_text, token_count')
+        .select('chunk_index, page_number, embedding, chunk_text, character_count')
         .eq('document_id', documentId)
 
       if (options.pageRange) {
@@ -375,7 +375,7 @@ async function fetchDocumentChunks(
           page_number: number | null
           embedding: number[] | string
           chunk_text: string | null
-          token_count: number | null
+          character_count: number | null
         }>>()
 
       if (error) {
@@ -406,7 +406,7 @@ async function fetchDocumentChunks(
           page_number: typeof record.page_number === 'number' ? record.page_number : null,
           embedding: record.embedding,
           chunk_text: record.chunk_text,
-          token_count: typeof record.token_count === 'number' ? record.token_count : null
+          character_count: typeof record.character_count === 'number' ? record.character_count : null
         }))
 
       allChunks.push(...sanitized)
@@ -429,7 +429,7 @@ async function fetchDocumentChunks(
       page_number: number | null
       embedding: number[] | string
       chunk_text: string | null
-      token_count: number | null
+      character_count: number | null
     }>>((acc, chunk) => {
       if (typeof chunk.chunk_index !== 'number') {
         return acc
@@ -443,7 +443,7 @@ async function fetchDocumentChunks(
         page_number: typeof chunk.page_number === 'number' ? chunk.page_number : null,
         embedding: chunk.embedding,
         chunk_text: typeof chunk.chunk_text === 'string' ? chunk.chunk_text : null,
-        token_count: typeof chunk.token_count === 'number' ? chunk.token_count : null
+        character_count: typeof chunk.character_count === 'number' ? chunk.character_count : null
       })
       return acc
     }, [])
@@ -481,16 +481,16 @@ async function fetchDocumentChunks(
         continue
       }
 
-      // Calculate token count (use stored value or estimate from text)
-      let tokenCount: number
-      if (typeof chunk.token_count === 'number' && chunk.token_count > 0) {
-        tokenCount = chunk.token_count
+      // Calculate character count (use stored value or calculate from text)
+      let characterCount: number
+      if (typeof chunk.character_count === 'number' && chunk.character_count > 0) {
+        characterCount = chunk.character_count
       } else if (chunk.chunk_text) {
-        // Fallback: estimate tokens as text.length / 4
-        tokenCount = Math.ceil(chunk.chunk_text.length / 4)
+        // Fallback: use actual text length
+        characterCount = chunk.chunk_text.length
       } else {
-        // Last resort: assume minimum token count
-        tokenCount = 1
+        // Last resort: assume minimum character count
+        characterCount = 1
       }
 
       normalizedChunks.push({
@@ -499,7 +499,7 @@ async function fetchDocumentChunks(
         pageNumber: chunk.page_number || 1,
         embedding: embeddingValue as number[],
         text: chunk.chunk_text ?? undefined,
-        tokenCount
+        characterCount
       })
     }
 

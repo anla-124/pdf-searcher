@@ -8,13 +8,13 @@ export interface ChunkMatch {
     id: string
     index: number
     pageNumber: number
-    tokenCount: number
+    characterCount: number
   }
   chunkB: {
     id: string
     index: number
     pageNumber: number
-    tokenCount: number
+    characterCount: number
   }
   score: number
 }
@@ -28,11 +28,11 @@ export interface SectionMatch {
 }
 
 export interface SimilarityScores {
-  sourceScore: number              // Portion of source document matched (directional coverage)
-  targetScore: number              // Portion of target document matched (directional coverage)
-  matchedSourceTokens: number      // Absolute matched token count from source
-  matchedTargetTokens: number      // Absolute matched token count from target
-  explanation: string              // User-facing explanation
+  sourceScore: number                  // Portion of source document matched (directional coverage)
+  targetScore: number                  // Portion of target document matched (directional coverage)
+  matchedSourceCharacters: number      // Absolute matched character count from source
+  matchedTargetCharacters: number      // Absolute matched character count from target
+  explanation: string                  // User-facing explanation
 }
 
 export interface SimilarityDocument {
@@ -63,7 +63,7 @@ export interface Chunk {
   pageNumber: number
   embedding: number[]  // Pre-normalized (L2 normalized at write time)
   text?: string
-  tokenCount: number   // Required for token-based similarity scoring
+  characterCount: number   // Required for character-based similarity scoring
 }
 
 export interface Stage0Result {

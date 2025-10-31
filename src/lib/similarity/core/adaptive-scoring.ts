@@ -1,98 +1,98 @@
 /**
- * Token-Based Adaptive Scoring Formula
- * Uses actual content volume (tokens) instead of chunk counts for accurate similarity
- * Final score = matched coverage of the larger document (in tokens)
+ * Character-Based Adaptive Scoring Formula
+ * Uses actual content volume (characters) for accurate similarity measurement
+ * Final score = matched coverage of the larger document (in characters)
  */
 
 import { ChunkMatch, SimilarityScores } from '../types'
 
 export function computeAdaptiveScore(
   matchedPairs: ChunkMatch[],
-  docA_totalTokens: number,  // CRITICAL: Total tokens in document A
-  docB_totalTokens: number   // CRITICAL: Total tokens in document B
+  docA_totalCharacters: number,  // CRITICAL: Total characters in document A
+  docB_totalCharacters: number   // CRITICAL: Total characters in document B
 ): SimilarityScores {
 
   // Validate inputs
-  if (docA_totalTokens <= 0 || docB_totalTokens <= 0) {
+  if (docA_totalCharacters <= 0 || docB_totalCharacters <= 0) {
     throw new Error(
-      `Invalid total tokens: A=${docA_totalTokens}, B=${docB_totalTokens}`
+      `Invalid total characters: A=${docA_totalCharacters}, B=${docB_totalCharacters}`
     )
   }
 
-  // Calculate matched tokens from both perspectives
-  // Each match contributes tokens from both chunks
-  let matchedTokensA = 0  // Tokens from doc A in matched pairs
-  let matchedTokensB = 0  // Tokens from doc B in matched pairs
+  // Calculate matched characters from both perspectives
+  // Each match contributes characters from both chunks
+  let matchedCharactersA = 0  // Characters from doc A in matched pairs
+  let matchedCharactersB = 0  // Characters from doc B in matched pairs
 
   const uniqueSourceChunks = new Set<string>()
   const uniqueTargetChunks = new Set<string>()
 
   for (const match of matchedPairs) {
     if (!uniqueSourceChunks.has(match.chunkA.id)) {
-      matchedTokensA += match.chunkA.tokenCount
+      matchedCharactersA += match.chunkA.characterCount
       uniqueSourceChunks.add(match.chunkA.id)
     }
 
     if (!uniqueTargetChunks.has(match.chunkB.id)) {
-      matchedTokensB += match.chunkB.tokenCount
+      matchedCharactersB += match.chunkB.characterCount
       uniqueTargetChunks.add(match.chunkB.id)
     }
   }
 
   // Coverage from each perspective (directional scores)
-  const sourceScore = docA_totalTokens > 0 ? matchedTokensA / docA_totalTokens : 0
-  const targetScore = docB_totalTokens > 0 ? matchedTokensB / docB_totalTokens : 0
+  const sourceScore = docA_totalCharacters > 0 ? matchedCharactersA / docA_totalCharacters : 0
+  const targetScore = docB_totalCharacters > 0 ? matchedCharactersB / docB_totalCharacters : 0
 
   // User-Facing Explanation
   const matchedPairs_count = matchedPairs.length
   const explanation =
-    `Source reuse ${(sourceScore * 100).toFixed(1)}% (${matchedTokensA.toLocaleString()}/${docA_totalTokens.toLocaleString()} tokens), ` +
-    `target reuse ${(targetScore * 100).toFixed(1)}% (${matchedTokensB.toLocaleString()}/${docB_totalTokens.toLocaleString()} tokens) ` +
+    `Source reuse ${(sourceScore * 100).toFixed(1)}% (${matchedCharactersA.toLocaleString()}/${docA_totalCharacters.toLocaleString()} characters), ` +
+    `target reuse ${(targetScore * 100).toFixed(1)}% (${matchedCharactersB.toLocaleString()}/${docB_totalCharacters.toLocaleString()} characters) ` +
     `across ${matchedPairs_count} chunk pairs.`
 
   return {
     sourceScore,
     targetScore,
-    matchedSourceTokens: matchedTokensA,
-    matchedTargetTokens: matchedTokensB,
+    matchedSourceCharacters: matchedCharactersA,
+    matchedTargetCharacters: matchedCharactersB,
     explanation
   }
 }
 
 /**
- * Compute dynamic minimum evidence threshold (token-based)
+ * Compute dynamic minimum evidence threshold (character-based)
  * Prevents false positives from coincidental matches
  *
- * min_tokens = max(400, ceil(5% of smaller document's tokens))
- * Approximately equivalent to 8 chunks at ~50 tokens/chunk
+ * min_characters = max(1600, ceil(5% of smaller document's characters))
+ * Approximately equivalent to 8 chunks at ~200 characters/chunk
  *
- * @param docA_totalTokens - Total tokens in doc A
- * @param docB_totalTokens - Total tokens in doc B
- * @returns Minimum number of matched tokens required to show result
+ * @param docA_totalCharacters - Total characters in doc A
+ * @param docB_totalCharacters - Total characters in doc B
+ * @returns Minimum number of matched characters required to show result
  */
 export function computeMinimumEvidence(
-  docA_totalTokens: number,
-  docB_totalTokens: number
+  docA_totalCharacters: number,
+  docB_totalCharacters: number
 ): number {
-  const minTokens = Math.min(docA_totalTokens, docB_totalTokens)
-  const dynamicThreshold = Math.ceil(0.05 * minTokens)  // 5% of smaller doc
-  return Math.max(400, dynamicThreshold)  // ~8 chunks worth of tokens
+  const minCharacters = Math.min(docA_totalCharacters, docB_totalCharacters)
+  const dynamicThreshold = Math.ceil(0.05 * minCharacters)  // 5% of smaller doc
+  return Math.max(1600, dynamicThreshold)  // ~8 chunks worth of characters (400 * 4)
 }
 
 /**
- * Check if matched tokens meet minimum evidence requirement
+ * Check if matched characters meet minimum evidence requirement
  * Use this in Stage 2 to filter out low-evidence results
  *
- * @param matchedTokens - Total matched tokens (use smaller of A or B for conservative check)
- * @param docA_totalTokens - Total tokens in doc A
- * @param docB_totalTokens - Total tokens in doc B
+ * @param matchedCharacters - Total matched characters (use smaller of A or B for conservative check)
+ * @param docA_totalCharacters - Total characters in doc A
+ * @param docB_totalCharacters - Total characters in doc B
  * @returns true if sufficient evidence, false otherwise
  */
 export function hasSufficientEvidence(
-  matchedTokens: number,
-  docA_totalTokens: number,
-  docB_totalTokens: number
+  matchedCharacters: number,
+  docA_totalCharacters: number,
+  docB_totalCharacters: number
 ): boolean {
-  const minRequired = computeMinimumEvidence(docA_totalTokens, docB_totalTokens)
-  return matchedTokens >= minRequired
+  const minRequired = computeMinimumEvidence(docA_totalCharacters, docB_totalCharacters)
+  return matchedCharacters >= minRequired
 }

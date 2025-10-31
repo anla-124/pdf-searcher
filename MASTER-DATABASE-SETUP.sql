@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS public.documents (
   -- Similarity search columns for 3-stage pipeline
   centroid_embedding vector(768),  -- Pre-computed document-level centroid for Stage 0 filtering
   effective_chunk_count INTEGER,   -- De-overlapped chunk count for accurate size ratio calculation
-  total_tokens INTEGER,            -- Total token count for accurate token-based similarity metrics
+  total_characters INTEGER,        -- Total character count for accurate character-based similarity metrics
   embedding_model TEXT DEFAULT 'text-embedding-004',  -- Track which embedding model was used
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS public.document_embeddings (
   embedding vector(768), -- 768 dimensions for Vertex AI embeddings
   chunk_index INTEGER NOT NULL,
   page_number INTEGER,
-  token_count INTEGER,   -- Token count for accurate token-based similarity metrics
+  character_count INTEGER,   -- Character count for accurate character-based similarity metrics
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -185,36 +185,36 @@ BEGIN
 END $$;
 
 -- =====================================================
--- SECTION 2.6: TOKEN-BASED SIMILARITY SEARCH COLUMNS
+-- SECTION 2.6: CHARACTER-BASED SIMILARITY SEARCH COLUMNS
 -- =====================================================
--- Add token_count and total_tokens columns for accurate token-based similarity metrics
+-- Add character_count and total_characters columns for accurate character-based similarity metrics
 -- This eliminates chunking artifacts and provides semantically accurate similarity percentages
 
 DO $$
 BEGIN
-  -- Add token_count column to document_embeddings if it doesn't exist
+  -- Add character_count column to document_embeddings if it doesn't exist
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                 WHERE table_name = 'document_embeddings' AND column_name = 'token_count') THEN
-    ALTER TABLE document_embeddings ADD COLUMN token_count INTEGER;
-    RAISE NOTICE 'Added token_count column to document_embeddings table';
+                 WHERE table_name = 'document_embeddings' AND column_name = 'character_count') THEN
+    ALTER TABLE document_embeddings ADD COLUMN character_count INTEGER;
+    RAISE NOTICE 'Added character_count column to document_embeddings table';
   END IF;
 
-  -- Add total_tokens column to documents if it doesn't exist
+  -- Add total_characters column to documents if it doesn't exist
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                 WHERE table_name = 'documents' AND column_name = 'total_tokens') THEN
-    ALTER TABLE documents ADD COLUMN total_tokens INTEGER;
-    RAISE NOTICE 'Added total_tokens column to documents table';
+                 WHERE table_name = 'documents' AND column_name = 'total_characters') THEN
+    ALTER TABLE documents ADD COLUMN total_characters INTEGER;
+    RAISE NOTICE 'Added total_characters column to documents table';
   END IF;
 END $$;
 
--- Add indexes for token-based similarity search performance
-CREATE INDEX IF NOT EXISTS idx_document_embeddings_token_count
-ON document_embeddings(token_count)
-WHERE token_count IS NOT NULL;
+-- Add indexes for character-based similarity search performance
+CREATE INDEX IF NOT EXISTS idx_document_embeddings_character_count
+ON document_embeddings(character_count)
+WHERE character_count IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_documents_total_tokens
-ON documents(total_tokens)
-WHERE total_tokens IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_documents_total_characters
+ON documents(total_characters)
+WHERE total_characters IS NOT NULL;
 
 -- =====================================================
 -- SECTION 3: ACTIVITY LOGGING SYSTEM

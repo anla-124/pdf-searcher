@@ -201,12 +201,11 @@ export function mergeFormOptions(sentences: string[]): string[] {
 }
 
 /**
- * Count tokens in text using character-based estimation
- * Industry standard: ~4 characters per token for English text
- * This is more accurate for legal text with punctuation, numbers, and special characters
+ * Count characters in text
+ * Returns the actual character count for accurate content volume measurement
  */
-export function countTokens(text: string): number {
-  return Math.ceil(text.trim().length / 4)
+export function countCharacters(text: string): number {
+  return text.trim().length
 }
 
 /**
@@ -215,16 +214,16 @@ export function countTokens(text: string): number {
  * @param text - Full text to chunk
  * @param targetSentences - Target number of sentences per chunk (default: 4)
  * @param overlapSentences - Number of sentences to overlap (default: 1)
- * @param minTokens - Minimum tokens per chunk (default: 100)
- * @param maxTokens - Maximum tokens per chunk (default: 500)
+ * @param minCharacters - Minimum characters per chunk (default: 400)
+ * @param maxCharacters - Maximum characters per chunk (default: 2000)
  * @returns Array of text chunks
  */
 export function chunkBySentences(
   text: string,
   targetSentences: number = 4,
   overlapSentences: number = 1,
-  minTokens: number = 100,
-  maxTokens: number = 500
+  minCharacters: number = 400,
+  maxCharacters: number = 2000
 ): string[] {
   // Step 1: Remove footnotes
   const withoutFootnotes = removeFootnotes(text)
@@ -247,7 +246,7 @@ export function chunkBySentences(
 
   while (i < sentences.length) {
     const chunkSentences: string[] = []
-    let chunkTokens = 0
+    let chunkChars = 0
     let sentenceCount = 0
 
     // Accumulate sentences for this chunk
@@ -255,38 +254,38 @@ export function chunkBySentences(
       const sentence = sentences[i + sentenceCount]
       if (!sentence) break // Stop if we hit undefined
 
-      const sentenceTokens = countTokens(sentence)
+      const sentenceChars = countCharacters(sentence)
 
-      // Check if adding this sentence would exceed max tokens
-      if (chunkTokens + sentenceTokens > maxTokens && chunkSentences.length >= 2) {
+      // Check if adding this sentence would exceed max characters
+      if (chunkChars + sentenceChars > maxCharacters && chunkSentences.length >= 2) {
         // Already have at least 2 sentences, stop here
         break
       }
 
       chunkSentences.push(sentence)
-      chunkTokens += sentenceTokens
+      chunkChars += sentenceChars
       sentenceCount++
 
-      // If we've hit min tokens and target sentences, we can stop
-      if (chunkTokens >= minTokens && sentenceCount >= targetSentences) {
+      // If we've hit min characters and target sentences, we can stop
+      if (chunkChars >= minCharacters && sentenceCount >= targetSentences) {
         break
       }
     }
 
-    // If chunk is below min tokens and we have more sentences, try to add one more
-    while (chunkTokens < minTokens && i + sentenceCount < sentences.length) {
+    // If chunk is below min characters and we have more sentences, try to add one more
+    while (chunkChars < minCharacters && i + sentenceCount < sentences.length) {
       const sentence = sentences[i + sentenceCount]
       if (!sentence) break // Stop if we hit undefined
 
-      const sentenceTokens = countTokens(sentence)
+      const sentenceChars = countCharacters(sentence)
 
-      // Don't exceed max tokens
-      if (chunkTokens + sentenceTokens > maxTokens) {
+      // Don't exceed max characters
+      if (chunkChars + sentenceChars > maxCharacters) {
         break
       }
 
       chunkSentences.push(sentence)
-      chunkTokens += sentenceTokens
+      chunkChars += sentenceChars
       sentenceCount++
     }
 

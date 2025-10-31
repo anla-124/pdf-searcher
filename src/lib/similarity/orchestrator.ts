@@ -20,7 +20,7 @@ import { SimilarityResult, Chunk, Stage1Result } from './types'
 interface SupabaseDocumentRecord {
   id: string
   effective_chunk_count: number | null
-  total_tokens: number | null
+  total_characters: number | null
   [key: string]: unknown
 }
 
@@ -214,18 +214,18 @@ export async function executeSimilaritySearch(
       )
     }
 
-    if (!sourceDoc.total_tokens || sourceDoc.total_tokens <= 0) {
+    if (!sourceDoc.total_characters || sourceDoc.total_characters <= 0) {
       logger.warn(
-        'Source document missing total_tokens; using chunk-derived token total',
+        'Source document missing total_characters; using chunk-derived character total',
         { sourceDocId }
       )
     }
 
-    const sourceTotalTokens = sourceChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
+    const sourceTotalCharacters = sourceChunks.reduce((sum, chunk) => sum + chunk.characterCount, 0)
 
-    if (sourceTotalTokens <= 0) {
+    if (sourceTotalCharacters <= 0) {
       throw new Error(
-        `Source document ${sourceDocId} has no tokenized content within the selected scope`
+        `Source document ${sourceDocId} has no character content within the selected scope`
       )
     }
 
@@ -252,7 +252,7 @@ export async function executeSimilaritySearch(
       {
         ...sourceDoc,
         effective_chunk_count: sourceChunks.length,
-        total_tokens: sourceTotalTokens
+        total_characters: sourceTotalCharacters
       },
       stage1Result.candidateIds,  // Only candidates from Stage 1!
       {
@@ -359,7 +359,7 @@ async function fetchDocumentChunks(
       page_number: number | null
       embedding: number[] | string
       chunk_text: string | null
-      token_count: number | null
+      character_count: number | null
     }[] = []
 
     while (true) {
@@ -368,7 +368,7 @@ async function fetchDocumentChunks(
 
       let query = supabase
         .from('document_embeddings')
-        .select('chunk_index, page_number, embedding, chunk_text, token_count')
+        .select('chunk_index, page_number, embedding, chunk_text, character_count')
         .eq('document_id', documentId)
 
       if (options.pageRange) {
@@ -385,7 +385,7 @@ async function fetchDocumentChunks(
           page_number: number | null
           embedding: number[] | string
           chunk_text: string | null
-          token_count: number | null
+          character_count: number | null
         }>>()
 
       if (error) {
@@ -416,7 +416,7 @@ async function fetchDocumentChunks(
           page_number: typeof record.page_number === 'number' ? record.page_number : null,
           embedding: record.embedding,
           chunk_text: record.chunk_text,
-          token_count: typeof record.token_count === 'number' ? record.token_count : null
+          character_count: typeof record.character_count === 'number' ? record.character_count : null
         }))
 
       allChunks.push(...sanitized)
@@ -479,16 +479,16 @@ async function fetchDocumentChunks(
 
       const numericEmbedding = embeddingValue as number[]
 
-      // Calculate token count (use stored value or estimate from text)
-      let tokenCount: number
-      if (typeof chunk.token_count === 'number' && chunk.token_count > 0) {
-        tokenCount = chunk.token_count
+      // Calculate character count (use stored value or calculate from text)
+      let characterCount: number
+      if (typeof chunk.character_count === 'number' && chunk.character_count > 0) {
+        characterCount = chunk.character_count
       } else if (chunk.chunk_text) {
-        // Fallback: estimate tokens as text.length / 4
-        tokenCount = Math.ceil(chunk.chunk_text.length / 4)
+        // Fallback: use actual text length
+        characterCount = chunk.chunk_text.length
       } else {
-        // Last resort: assume minimum token count
-        tokenCount = 1
+        // Last resort: assume minimum character count
+        characterCount = 1
       }
 
       normalizedChunks.push({
@@ -497,7 +497,7 @@ async function fetchDocumentChunks(
         pageNumber: chunk.page_number || 1,
         embedding: numericEmbedding,
         text: chunk.chunk_text ?? undefined,
-        tokenCount
+        characterCount
       })
     }
 

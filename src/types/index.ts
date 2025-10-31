@@ -30,7 +30,7 @@ export interface Document {
   page_count?: number
   created_at: string
   updated_at: string
-  total_tokens?: number
+  total_characters?: number
 }
 
 // DEPRECATED: Use BusinessMetadata from external-apis.ts instead

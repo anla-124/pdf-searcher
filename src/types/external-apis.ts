@@ -953,7 +953,7 @@ export interface BusinessMetadata {
     processing_duration_ms?: number
     page_count?: number
     file_size_bytes?: number
-    estimated_tokens?: number
+    estimated_characters?: number
   }
   embeddings_info?: {
     embeddings_skipped?: boolean

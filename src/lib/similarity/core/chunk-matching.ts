@@ -122,29 +122,29 @@ export async function findBidirectionalMatches(
 
   // Dynamic minimum evidence filter (CRITICAL)
   // Prevents false positives from coincidental matches
-  // Calculate total tokens for both documents
-  const totalTokensA = chunksA.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
-  const totalTokensB = chunksB.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
+  // Calculate total characters for both documents
+  const totalCharactersA = chunksA.reduce((sum, chunk) => sum + chunk.characterCount, 0)
+  const totalCharactersB = chunksB.reduce((sum, chunk) => sum + chunk.characterCount, 0)
 
-  // Calculate matched tokens (use smaller of A or B for conservative check)
-  const matchedTokensA = allMatches.reduce((sum, match) => sum + match.chunkA.tokenCount, 0)
-  const matchedTokensB = allMatches.reduce((sum, match) => sum + match.chunkB.tokenCount, 0)
-  const matchedTokens = Math.min(matchedTokensA, matchedTokensB)
+  // Calculate matched characters (use smaller of A or B for conservative check)
+  const matchedCharactersA = allMatches.reduce((sum, match) => sum + match.chunkA.characterCount, 0)
+  const matchedCharactersB = allMatches.reduce((sum, match) => sum + match.chunkB.characterCount, 0)
+  const matchedCharacters = Math.min(matchedCharactersA, matchedCharactersB)
 
   const sufficientEvidence = hasSufficientEvidence(
-    matchedTokens,
-    totalTokensA,
-    totalTokensB
+    matchedCharacters,
+    totalCharactersA,
+    totalCharactersB
   )
 
   if (!sufficientEvidence) {
-    const minRequired = Math.max(400, Math.ceil(0.05 * Math.min(totalTokensA, totalTokensB)))
+    const minRequired = Math.max(1600, Math.ceil(0.05 * Math.min(totalCharactersA, totalCharactersB)))
     logger.warn('Insufficient evidence for similarity match', {
       matchCount: allMatches.length,
-      matchedTokens,
-      totalTokensA,
-      totalTokensB,
-      requiredTokens: minRequired
+      matchedCharacters,
+      totalCharactersA,
+      totalCharactersB,
+      requiredCharacters: minRequired
     })
     return null
   }
@@ -221,13 +221,13 @@ function findBestMatches(
         id: chunkA.id,
         index: chunkA.index,
         pageNumber: chunkA.pageNumber,
-        tokenCount: chunkA.tokenCount
+        characterCount: chunkA.characterCount
       },
       chunkB: {
         id: bestMatch.chunkB.id,
         index: bestMatch.chunkB.index,
         pageNumber: bestMatch.chunkB.pageNumber,
-        tokenCount: bestMatch.chunkB.tokenCount
+        characterCount: bestMatch.chunkB.characterCount
       },
       score: bestMatch.score
     })
@@ -455,13 +455,13 @@ function computeFallbackMatches(
           id: chunkA.id,
           index: chunkA.index,
           pageNumber: chunkA.pageNumber,
-          tokenCount: chunkA.tokenCount
+          characterCount: chunkA.characterCount
         },
         chunkB: {
           id: chunkB.id,
           index: chunkB.index,
           pageNumber: chunkB.pageNumber,
-          tokenCount: chunkB.tokenCount
+          characterCount: chunkB.characterCount
         },
         score: pairScore
       })

@@ -34,8 +34,8 @@ interface SimilarityResult {
   scores: {
     sourceScore: number
     targetScore: number
-    matchedSourceTokens: number
-    matchedTargetTokens: number
+    matchedSourceCharacters: number
+    matchedTargetCharacters: number
     lengthRatio?: number | null
   }
   matching_chunks: Array<{ text: string; score: number }>
@@ -123,8 +123,8 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
     const targetDiff = a.scores.targetScore - b.scores.targetScore
     if (Math.abs(targetDiff) > tolerance) return targetDiff
 
-    const matchedTokenDiff = a.scores.matchedTargetTokens - b.scores.matchedTargetTokens
-    if (matchedTokenDiff !== 0) return matchedTokenDiff
+    const matchedCharDiff = a.scores.matchedTargetCharacters - b.scores.matchedTargetCharacters
+    if (matchedCharDiff !== 0) return matchedCharDiff
 
     const uploadDiff = new Date(a.document.created_at).getTime() - new Date(b.document.created_at).getTime()
     if (uploadDiff !== 0) return uploadDiff

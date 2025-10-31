@@ -16,6 +16,6 @@ export const SENTENCES_PER_CHUNK = parseInt(process.env['SENTENCES_PER_CHUNK'] ?
 export const SENTENCE_OVERLAP = parseInt(process.env['SENTENCE_OVERLAP'] ?? '1', 10)
 
 // Paragraph-based chunking constants (current approach)
-// v4.5.0: Greedy algorithm uses only MAX_CHUNK_TOKENS for strict token enforcement
-export const MIN_CHUNK_TOKENS = parseInt(process.env['MIN_CHUNK_TOKENS'] ?? '80', 10)
-export const MAX_CHUNK_TOKENS = parseInt(process.env['MAX_CHUNK_TOKENS'] ?? '250', 10)
+// v4.5.0: Greedy algorithm uses character-based limits for strict enforcement
+export const MIN_CHUNK_CHARACTERS = parseInt(process.env['MIN_CHUNK_CHARACTERS'] ?? '320', 10) 
+export const MAX_CHUNK_CHARACTERS = parseInt(process.env['MAX_CHUNK_CHARACTERS'] ?? '1000', 10)
