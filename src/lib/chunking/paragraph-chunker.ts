@@ -16,11 +16,15 @@ export interface Paragraph {
   text: string
   pageNumber: number
   index: number
+  startPageNumber?: number  // Track page range for merged paragraphs
+  endPageNumber?: number    // Track page range for merged paragraphs
 }
 
 export interface Chunk {
   text: string
-  pageNumber: number
+  pageNumber: number        // Keep for backward compatibility
+  startPageNumber: number   // First page in chunk
+  endPageNumber: number     // Last page in chunk
   chunkIndex: number
   characterCount: number
 }
@@ -449,7 +453,9 @@ export function mergeIncompleteParagraphs(paragraphs: Paragraph[], maxCharacters
         // Safe to merge current with next
         merged.push({
           ...para,
-          text: para.text + ' ' + nextPara.text
+          text: para.text + ' ' + nextPara.text,
+          startPageNumber: para.startPageNumber ?? para.pageNumber,
+          endPageNumber: nextPara.endPageNumber ?? nextPara.pageNumber
         })
         i++ // Skip the next paragraph since we merged it
       } else {
@@ -605,9 +611,25 @@ export function chunkByParagraphs(
     if (chunkParagraphs.length > 0) {
       const chunkText = chunkParagraphs.map(p => p.text).join(' ')
 
+      // Calculate page range for entire chunk
+      const allPageNumbers: number[] = []
+      for (const p of chunkParagraphs) {
+        // If paragraph has explicit page range, use those
+        if (p.startPageNumber !== undefined && p.endPageNumber !== undefined) {
+          allPageNumbers.push(p.startPageNumber, p.endPageNumber)
+        } else {
+          // Otherwise use the paragraph's page number
+          allPageNumbers.push(p.pageNumber)
+        }
+      }
+      const startPage = Math.min(...allPageNumbers)
+      const endPage = Math.max(...allPageNumbers)
+
       chunks.push({
         text: chunkText,
-        pageNumber: chunkParagraphs[0]?.pageNumber ?? 1,
+        pageNumber: chunkParagraphs[0]?.pageNumber ?? 1,  // Keep for compatibility
+        startPageNumber: startPage,
+        endPageNumber: endPage,
         chunkIndex: chunks.length,
         characterCount: chunkChars
       })

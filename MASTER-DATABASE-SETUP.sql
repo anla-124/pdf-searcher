@@ -9,6 +9,7 @@
 -- ✅ Advanced indexing strategies for 100+ concurrent users
 -- ✅ Activity logging system for user tracking
 -- ✅ 3-stage similarity search with centroid-based filtering
+-- ✅ Multi-page chunk tracking for accurate page range searches
 -- ✅ Batch processing support for large documents
 -- ✅ Pre-aggregated views for admin dashboards
 -- ✅ Security policies and threat protection
@@ -90,6 +91,8 @@ CREATE TABLE IF NOT EXISTS public.document_embeddings (
   embedding vector(768), -- 768 dimensions for Vertex AI embeddings
   chunk_index INTEGER NOT NULL,
   page_number INTEGER,
+  start_page_number INTEGER,  -- First page in chunk (for chunks spanning multiple pages)
+  end_page_number INTEGER,    -- Last page in chunk (for chunks spanning multiple pages)
   character_count INTEGER,   -- Character count for accurate character-based similarity metrics
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -329,6 +332,18 @@ WHERE status IN ('completed', 'processing', 'queued');
 CREATE INDEX IF NOT EXISTS idx_document_embeddings_document_id ON document_embeddings(document_id);
 CREATE INDEX IF NOT EXISTS idx_document_embeddings_page ON document_embeddings(document_id, page_number);
 CREATE INDEX IF NOT EXISTS idx_document_embeddings_chunk ON document_embeddings(document_id, chunk_index);
+
+-- Page range indexes for multi-page chunk support
+CREATE INDEX IF NOT EXISTS idx_document_embeddings_page_range
+ON document_embeddings(document_id, start_page_number, end_page_number);
+
+CREATE INDEX IF NOT EXISTS idx_document_embeddings_start_page
+ON document_embeddings(document_id, start_page_number)
+WHERE start_page_number IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_document_embeddings_end_page
+ON document_embeddings(document_id, end_page_number)
+WHERE end_page_number IS NOT NULL;
 
 -- Processing status indexes
 CREATE INDEX IF NOT EXISTS idx_processing_status_document_id ON processing_status(document_id);

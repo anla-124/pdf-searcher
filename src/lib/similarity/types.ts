@@ -60,10 +60,12 @@ export interface SimilarityResult {
 export interface Chunk {
   id: string
   index: number
-  pageNumber: number
-  embedding: number[]  // Pre-normalized (L2 normalized at write time)
+  pageNumber: number         // Keep for backward compatibility
+  startPageNumber?: number   // First page in chunk (for chunks spanning multiple pages)
+  endPageNumber?: number     // Last page in chunk (for chunks spanning multiple pages)
+  embedding: number[]        // Pre-normalized (L2 normalized at write time)
   text?: string
-  characterCount: number   // Required for character-based similarity scoring
+  characterCount: number     // Required for character-based similarity scoring
 }
 
 export interface Stage0Result {

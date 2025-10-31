@@ -358,6 +358,8 @@ async function fetchDocumentChunks(
     const allChunks: {
       chunk_index: number
       page_number: number | null
+      start_page_number: number | null
+      end_page_number: number | null
       embedding: number[] | string
       chunk_text: string | null
       character_count: number | null
@@ -369,13 +371,17 @@ async function fetchDocumentChunks(
 
       let query = supabase
         .from('document_embeddings')
-        .select('chunk_index, page_number, embedding, chunk_text, character_count')
+        .select('chunk_index, page_number, start_page_number, end_page_number, embedding, chunk_text, character_count')
         .eq('document_id', documentId)
 
       if (options.pageRange) {
-        query = query
-          .gte('page_number', options.pageRange.start_page)
-          .lte('page_number', options.pageRange.end_page)
+        // Improved query: Include chunks where page range overlaps with search range
+        // A chunk overlaps if: start_page <= search_end AND end_page >= search_start
+        // Also handle old chunks without page range (use page_number as fallback)
+        query = query.or(
+          `and(start_page_number.lte.${options.pageRange.end_page},end_page_number.gte.${options.pageRange.start_page}),` +
+          `and(start_page_number.is.null,page_number.gte.${options.pageRange.start_page},page_number.lte.${options.pageRange.end_page})`
+        )
       }
 
       const { data, error } = await query
@@ -384,6 +390,8 @@ async function fetchDocumentChunks(
         .returns<Array<{
           chunk_index: number | null
           page_number: number | null
+          start_page_number: number | null
+          end_page_number: number | null
           embedding: number[] | string
           chunk_text: string | null
           character_count: number | null
@@ -415,6 +423,8 @@ async function fetchDocumentChunks(
         .map(record => ({
           chunk_index: record.chunk_index as number,
           page_number: typeof record.page_number === 'number' ? record.page_number : null,
+          start_page_number: typeof record.start_page_number === 'number' ? record.start_page_number : null,
+          end_page_number: typeof record.end_page_number === 'number' ? record.end_page_number : null,
           embedding: record.embedding,
           chunk_text: record.chunk_text,
           character_count: typeof record.character_count === 'number' ? record.character_count : null
@@ -496,6 +506,8 @@ async function fetchDocumentChunks(
         id: `${documentId}_chunk_${chunk.chunk_index}`,
         index: chunk.chunk_index,
         pageNumber: chunk.page_number || 1,
+        startPageNumber: chunk.start_page_number ?? undefined,
+        endPageNumber: chunk.end_page_number ?? undefined,
         embedding: numericEmbedding,
         text: chunk.chunk_text ?? undefined,
         characterCount

@@ -993,7 +993,9 @@ async function processChunkWithRetry(
                 embedding,
                 chunk_text: pagedChunk.text,
                 chunk_index: pagedChunk.chunkIndex,
-                page_number: pagedChunk.pageNumber,
+                page_number: pagedChunk.pageNumber,        // Keep for compatibility
+                start_page_number: pagedChunk.startPageNumber,
+                end_page_number: pagedChunk.endPageNumber,
                 character_count: pagedChunk.characterCount,
               },
               {
@@ -1034,7 +1036,9 @@ async function processChunkWithRetry(
             {
               document_id: documentId,
               chunk_index: pagedChunk.chunkIndex,
-              page_number: pagedChunk.pageNumber,
+              page_number: pagedChunk.pageNumber,        // Keep for compatibility
+              start_page_number: pagedChunk.startPageNumber,
+              end_page_number: pagedChunk.endPageNumber,
               text: pagedChunk.text,
               filename,
               ...(userId ? { user_id: userId } : {}),
@@ -1640,7 +1644,9 @@ export async function generateAndIndexEmbeddings(documentId: string, text: strin
 interface PagedChunk {
   text: string
   chunkIndex: number
-  pageNumber: number
+  pageNumber: number        // Keep for backward compatibility
+  startPageNumber: number   // First page in chunk
+  endPageNumber: number     // Last page in chunk
   characterCount: number
 }
 
@@ -1801,11 +1807,16 @@ function splitTextIntoPagedChunks(
 
     // Find this chunk's position in the full text
     const chunkStartIndex = fullText.indexOf(chunkText, currentCharIndex)
+    const chunkEndIndex = chunkStartIndex >= 0 ? chunkStartIndex + chunkText.length : chunkStartIndex
 
-    // Assign page number based on where the chunk starts
-    const pageNumber = chunkStartIndex >= 0 && chunkStartIndex < charToPage.length
+    // Calculate page range for chunk
+    const startPage = chunkStartIndex >= 0 && chunkStartIndex < charToPage.length
       ? (charToPage[chunkStartIndex] ?? 1)
       : (pagesText[0]?.pageNumber ?? 1)
+
+    const endPage = chunkEndIndex >= 0 && chunkEndIndex - 1 < charToPage.length
+      ? (charToPage[Math.max(0, chunkEndIndex - 1)] ?? startPage)
+      : startPage
 
     // Calculate character count for this chunk
     const characterCount = countCharacters(chunkText)
@@ -1813,7 +1824,9 @@ function splitTextIntoPagedChunks(
     pagedChunks.push({
       text: chunkText,
       chunkIndex: i,
-      pageNumber: pageNumber,
+      pageNumber: startPage,  // Keep for compatibility
+      startPageNumber: startPage,
+      endPageNumber: endPage,
       characterCount
     })
 
@@ -1841,7 +1854,9 @@ function splitParagraphsIntoChunks(paragraphs: Paragraph[]): PagedChunk[] {
   return chunks.map(chunk => ({
     text: chunk.text,
     chunkIndex: chunk.chunkIndex,
-    pageNumber: chunk.pageNumber,
+    pageNumber: chunk.pageNumber,        // Keep for compatibility
+    startPageNumber: chunk.startPageNumber,
+    endPageNumber: chunk.endPageNumber,
     characterCount: chunk.characterCount
   }))
 }

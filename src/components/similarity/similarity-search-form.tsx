@@ -179,6 +179,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                 onClick={() => setFilters(prev => ({
                   ...prev,
                   page_range: {
+                    ...(prev.page_range ?? {}),
                     use_entire_document: true
                   }
                 }))}
@@ -192,7 +193,7 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                 onClick={() => setFilters(prev => ({
                   ...prev,
                   page_range: {
-                    ...prev.page_range,
+                    ...(prev.page_range ?? {}),
                     use_entire_document: false
                   }
                 }))}
