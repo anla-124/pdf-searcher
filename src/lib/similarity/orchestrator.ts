@@ -16,6 +16,7 @@ import { stage0CandidateRetrieval } from './stages/stage0-candidate-retrieval'
 import { stage1ChunkPrefilter } from './stages/stage1-chunk-prefilter'
 import { stage2FinalScoring } from './stages/stage2-final-scoring'
 import { SimilarityResult, Chunk, Stage1Result } from './types'
+import { countCharacters } from '@/lib/chunking/paragraph-chunker'
 
 interface SupabaseDocumentRecord {
   id: string
@@ -484,8 +485,8 @@ async function fetchDocumentChunks(
       if (typeof chunk.character_count === 'number' && chunk.character_count > 0) {
         characterCount = chunk.character_count
       } else if (chunk.chunk_text) {
-        // Fallback: use actual text length
-        characterCount = chunk.chunk_text.length
+        // Fallback: calculate character count excluding spaces
+        characterCount = countCharacters(chunk.chunk_text)
       } else {
         // Last resort: assume minimum character count
         characterCount = 1

@@ -11,6 +11,7 @@ import { SimilarityResult, Chunk } from '../types'
 import { findBidirectionalMatches } from '../core/chunk-matching'
 import { computeAdaptiveScore } from '../core/adaptive-scoring'
 import { groupMatchesIntoSections } from '../core/section-detection'
+import { countCharacters } from '@/lib/chunking/paragraph-chunker'
 
 /**
  * Compute final adaptive scores for all candidates in parallel
@@ -486,8 +487,8 @@ async function fetchDocumentChunks(
       if (typeof chunk.character_count === 'number' && chunk.character_count > 0) {
         characterCount = chunk.character_count
       } else if (chunk.chunk_text) {
-        // Fallback: use actual text length
-        characterCount = chunk.chunk_text.length
+        // Fallback: calculate character count excluding spaces
+        characterCount = countCharacters(chunk.chunk_text)
       } else {
         // Last resort: assume minimum character count
         characterCount = 1

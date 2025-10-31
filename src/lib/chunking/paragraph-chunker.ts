@@ -284,11 +284,12 @@ export function mergeFormOptions(paragraphs: Paragraph[], maxCharacters: number 
 }
 
 /**
- * Count characters in text
+ * Count characters in text (excluding spaces)
  * Returns the actual character count for accurate content volume measurement
+ * Spaces are excluded to ensure semantic accuracy and robustness against formatting differences
  */
 export function countCharacters(text: string): number {
-  return text.trim().length
+  return text.replace(/\s+/g, '').length
 }
 
 /**
