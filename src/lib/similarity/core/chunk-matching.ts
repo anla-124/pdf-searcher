@@ -237,13 +237,17 @@ function findBestMatches(
 }
 
 /**
- * Merge bidirectional matches, deduplicating pairs AND enforcing 1-to-1 constraint
- * CRITICAL: Each chunk can appear in at most ONE pair (true 1-to-1 matching)
+ * Merge bidirectional matches, deduplicating pairs
  *
  * Algorithm:
  * 1. Collect all candidate pairs from both directions
  * 2. Sort by score (highest first)
- * 3. Greedily select pairs, skipping if either chunk already used
+ * 3. Remove exact duplicate pairs (same source → same target)
+ *
+ * Note: This allows multiple-to-one relationships:
+ * - Multiple source chunks can match the same target chunk
+ * - Multiple target chunks can match the same source chunk
+ * Character-based scoring handles deduplication via Sets
  */
 function mergeBidirectionalMatches(
   matchesAtoB: Map<string, ChunkMatch>,
@@ -272,6 +276,15 @@ function mergeBidirectionalMatches(
   return greedySelectPairs(allPairs)
 }
 
+/**
+ * Remove exact duplicate pairs from candidate list
+ *
+ * Only removes pairs where the same source chunk maps to the same target chunk.
+ * Does NOT enforce 1-to-1 constraint - allows multiple-to-one relationships.
+ *
+ * @param pairs - Candidate chunk pairs (may contain duplicate pairs)
+ * @returns Filtered pairs with exact duplicates removed
+ */
 function greedySelectPairs(pairs: ChunkMatch[]): ChunkMatch[] {
   const sorted = [...pairs].sort((a, b) => b.score - a.score)
   const seenPairs = new Set<string>()

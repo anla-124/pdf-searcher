@@ -173,26 +173,24 @@ export function isFormOption(text: string): boolean {
 
 /**
  * Detect if a paragraph looks like a footnote
- * Footnotes typically start with numbers followed by common legal phrases
+ *
+ * NOTE: Currently disabled because Document AI outputs plain text without formatting.
+ * Superscripts (⁰¹²³⁴⁵⁶⁷⁸⁹) in PDFs are converted to regular digits (0-9) by OCR,
+ * making reliable footnote detection impossible without risking false positives
+ * (e.g., removing "1 The Investor is..." questionnaire items).
+ *
+ * Footnotes will be included in similarity matching. This is safer than accidentally
+ * removing legitimate content.
  */
 export function isFootnote(text: string): boolean {
-  const trimmed = text.trim()
-
-  // Check if starts with superscript number + common footnote phrases
-  if (/^[⁰¹²³⁴⁵⁶⁷⁸⁹]+\s+(For purposes|The SEC currently|This)/.test(trimmed)) {
-    return true
-  }
-
-  // Check if starts with regular number + common footnote phrases
-  if (/^[0-9]+\s+(For purposes|The SEC currently|This)/.test(trimmed)) {
-    return true
-  }
-
+  // Intentionally always returns false - footnote detection disabled
+  void text // Suppress unused parameter warning
   return false
 }
 
 /**
  * Remove footnote paragraphs from the list
+ * Currently a no-op since isFootnote always returns false
  */
 export function removeFootnotes(paragraphs: Paragraph[]): Paragraph[] {
   return paragraphs.filter(para => !isFootnote(para.text))
@@ -409,11 +407,38 @@ function isParagraphIncomplete(para: Paragraph, nextPara?: Paragraph): boolean {
   // Check if ends with common incomplete patterns
   const last10Words = text.split(/\s+/).slice(-10).join(' ').toLowerCase()
 
-  // Common words that indicate mid-sentence
+  // Common words that indicate mid-sentence (prepositions, articles, conjunctions)
   const incompletePatt = /(^|\s)(the|a|an|of|in|on|at|to|for|with|from|by|and|or|but|as|within|under|over|about|into|through|during|before|after|between|among)$/i
 
   if (incompletePatt.test(last10Words)) {
     return true
+  }
+
+  // Number words at the end often indicate incomplete phrases
+  // "in each of the two" → clearly needs continuation like "two years" or "two most recent years"
+  const numberWordsPatt = /(^|\s)(one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|each|every|any|some|all|both|either|neither|such)$/i
+  if (numberWordsPatt.test(last10Words)) {
+    return true
+  }
+
+  // Phrases that clearly indicate continuation
+  const incompletePhrases = [
+    /in\s+each\s+of\s+(the|these|those)?\s*(one|two|three|four|five|six|seven|eight|nine|ten)?$/i,
+    /in\s+excess\s+of$/i,
+    /not\s+less\s+than$/i,
+    /not\s+more\s+than$/i,
+    /subject\s+to$/i,
+    /pursuant\s+to$/i,
+    /in\s+accordance\s+with$/i,
+    /as\s+set\s+forth\s+in$/i,
+    /provided\s+that$/i,
+    /except\s+(that|as|for)$/i
+  ]
+
+  for (const pattern of incompletePhrases) {
+    if (pattern.test(last10Words)) {
+      return true
+    }
   }
 
   // If next paragraph starts with lowercase, likely a continuation

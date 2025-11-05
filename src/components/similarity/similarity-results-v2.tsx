@@ -58,7 +58,40 @@ interface SimilarityResultsV2Props {
 export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxResults }: SimilarityResultsV2Props) {
   const [sortBy, setSortBy] = useState<string>('source_score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [comparingDocs, setComparingDocs] = useState<Set<string>>(new Set())
   // selectedResult state removed - was only used by deleted SimilarityDetailsModal
+
+  const handleDraftableCompare = async (targetDocId: string) => {
+    setComparingDocs(prev => new Set(prev).add(targetDocId))
+    try {
+      const response = await fetch('/api/draftable/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceDocId: sourceDocument.id,
+          targetDocId: targetDocId
+        })
+      })
+
+      const data = await response.json()
+
+      if (data.success && data.viewerUrl) {
+        // Open Draftable viewer in new tab
+        window.open(data.viewerUrl, '_blank', 'noopener,noreferrer')
+      } else {
+        alert(`Failed to create comparison: ${data.error || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Draftable comparison error:', error)
+      alert('Failed to create comparison. Please try again.')
+    } finally {
+      setComparingDocs(prev => {
+        const next = new Set(prev)
+        next.delete(targetDocId)
+        return next
+      })
+    }
+  }
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -367,9 +400,11 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
                           <Button
                             size="sm"
                             className="bg-blue-600 hover:bg-blue-700 text-white focus-visible:ring-blue-400"
+                            onClick={() => handleDraftableCompare(result.document.id)}
+                            disabled={comparingDocs.has(result.document.id)}
                           >
                             <GitCompare className="h-4 w-4 mr-1 text-white" />
-                            Compare with Draftable
+                            {comparingDocs.has(result.document.id) ? 'Opening...' : 'Compare with Draftable'}
                           </Button>
                         </div>
                       </div>

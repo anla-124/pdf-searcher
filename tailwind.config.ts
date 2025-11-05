@@ -56,6 +56,15 @@ const config: Config = {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      keyframes: {
+        fade: {
+          '0%, 100%': { opacity: '0.4' },
+          '50%': { opacity: '1' },
+        },
+      },
+      animation: {
+        fade: 'fade 2s ease-in-out infinite',
+      },
     },
   },
   plugins: [require("tailwindcss-animate")],
