@@ -17,10 +17,10 @@ export async function GET(request: Request) {
       if (!userError && userData?.user) {
         const forwardedHost = request.headers.get('x-forwarded-host')
         const isLocalEnv = process.env.NODE_ENV === 'development'
-        
+
         if (isLocalEnv) {
-          // We can be sure that there is no load balancer in between, so no need to watch for X-Forwarded-Host
-          return NextResponse.redirect(`${origin}${next}`)
+          // Force HTTP in local development
+          return NextResponse.redirect(`http://localhost:3000${next}`)
         } else if (forwardedHost) {
           return NextResponse.redirect(`https://${forwardedHost}${next}`)
         } else {
