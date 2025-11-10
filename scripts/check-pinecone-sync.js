@@ -9,10 +9,10 @@
  * Requires the usual env vars (Supabase + Pinecone) to be available. By default we load `.env.local`.
  */
 
-const path = require('path')
-const { config } = require('dotenv')
-const { createClient } = require('@supabase/supabase-js')
-const { Pinecone } = require('@pinecone-database/pinecone')
+import path from 'path'
+import { config } from 'dotenv'
+import { createClient } from '@supabase/supabase-js'
+import { Pinecone } from '@pinecone-database/pinecone'
 
 config({ path: path.resolve(process.cwd(), '.env.local') })
 

@@ -3,9 +3,15 @@ import js from '@eslint/js'
 import typescriptEslint from '@typescript-eslint/eslint-plugin'
 import typescriptParser from '@typescript-eslint/parser'
 import unusedImports from 'eslint-plugin-unused-imports'
+import nextPlugin from '@next/eslint-plugin-next'
+import { fileURLToPath } from 'url'
+import { dirname } from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const compat = new FlatCompat({
-  baseDirectory: import.meta.dirname,
+  baseDirectory: __dirname,
   recommendedConfig: js.configs.recommended,
 })
 
@@ -25,8 +31,15 @@ export default [
     ],
   },
 
-  // Extend Next.js configuration first
+  // Extend Next.js configuration
   ...compat.extends('next/core-web-vitals'),
+
+  // Explicitly add Next.js plugin so it's detected during build
+  {
+    plugins: {
+      '@next/next': nextPlugin,
+    },
+  },
 
   // TypeScript files configuration
   {

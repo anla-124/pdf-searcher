@@ -6,11 +6,10 @@
  * Run outside the sandbox or ensure outbound network access is allowed.
  */
 
-const path = require('path')
-const fs = require('fs')
-const { config } = require('dotenv')
-const fetch = global.fetch || require('node-fetch')
-const { Pinecone } = require('@pinecone-database/pinecone')
+import path from 'path'
+import fs from 'fs'
+import { config } from 'dotenv'
+import { Pinecone } from '@pinecone-database/pinecone'
 
 const envPath = path.resolve(process.cwd(), '.env.local')
 if (fs.existsSync(envPath)) {

@@ -18,7 +18,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "@draftable/compare-api": "^1.4.4",
     "@google-cloud/documentai": "^9.4.0",
