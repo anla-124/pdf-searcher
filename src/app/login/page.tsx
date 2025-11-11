@@ -3,11 +3,17 @@
 import { GoogleAuthButton, EmailPasswordLogin } from '@/components/auth/oauth-buttons'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import Image from 'next/image'
+import { useState, useEffect } from 'react'
 
 export default function LoginPage() {
-  // Check if we're in local development mode
-  const isLocalDev = typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  // Check if we're in local development mode (only on client to avoid hydration mismatch)
+  const [isLocalDev, setIsLocalDev] = useState(false)
+
+  useEffect(() => {
+    setIsLocalDev(
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    )
+  }, [])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
