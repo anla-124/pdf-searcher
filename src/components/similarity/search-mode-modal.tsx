@@ -32,9 +32,9 @@ export function SearchModeModal({ isOpen, onClose, documentId, documentTitle: _d
         <div className="flex flex-col gap-3 py-4">
           {/* General Search */}
           <Link href={`/documents/${documentId}/similar`} onClick={onClose}>
-            <Button 
-              variant="outline" 
-              className="w-full h-12 flex items-center justify-center gap-2 hover:bg-blue-50 hover:border-blue-300"
+            <Button
+              variant="outline"
+              className="w-full h-12 flex items-center justify-center gap-2"
             >
               <Target className="h-4 w-4 text-blue-500" />
               General Search
@@ -42,9 +42,9 @@ export function SearchModeModal({ isOpen, onClose, documentId, documentTitle: _d
           </Link>
 
           {/* Selected Search */}
-          <Button 
-            variant="outline" 
-            className="w-full h-12 flex items-center justify-center gap-2 hover:bg-emerald-50 hover:border-emerald-300"
+          <Button
+            variant="outline"
+            className="w-full h-12 flex items-center justify-center gap-2"
             onClick={handleSelectedSearchClick}
           >
             <Users className="h-4 w-4 text-emerald-500" />

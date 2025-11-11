@@ -16,7 +16,7 @@ export default function LoginPage() {
   }, [])
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-[#0a1329] dark:via-[#0d1b3a] dark:to-[#0a1329] transition-colors duration-300">
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
@@ -33,7 +33,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">PDF Searcher</h1>
         </div>
 
-        <Card className="shadow-xl border-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm">
+        <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-900/90 dark:border-slate-700/50 backdrop-blur-sm">
           <CardHeader className="space-y-1 pb-6">
             <CardTitle className="text-xl text-center text-gray-900 dark:text-white">Welcome to PDF Searcher</CardTitle>
             <CardDescription className="text-center text-gray-600 dark:text-gray-400">

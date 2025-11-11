@@ -54,6 +54,19 @@
   * {
     @apply border-border;
   }
+
+  html {
+    transition: background-color 300ms ease-in-out, color 300ms ease-in-out;
+  }
+
+  html * {
+    transition: background-color 300ms ease-in-out,
+                border-color 300ms ease-in-out,
+                color 300ms ease-in-out,
+                fill 300ms ease-in-out,
+                stroke 300ms ease-in-out;
+  }
+
   body {
     @apply bg-background text-foreground;
   }
@@ -95,9 +108,18 @@
   /* Enhanced button styling */
   .dark .button-enhanced {
     @apply bg-gradient-to-r from-slate-700 to-slate-600 border-slate-600 hover:from-slate-600 hover:to-slate-500;
-    box-shadow: 
+    box-shadow:
       0 1px 2px rgba(0, 0, 0, 0.3),
       inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+
+  /* Primary button glow in dark mode */
+  .dark button[class*="bg-primary"], .dark button[class*="bg-blue"] {
+    box-shadow: 0 0 20px -5px rgba(59, 130, 246, 0.3);
+  }
+
+  .dark button[class*="bg-primary"]:hover, .dark button[class*="bg-blue"]:hover {
+    box-shadow: 0 0 25px -3px rgba(59, 130, 246, 0.5);
   }
 
   /* Input field enhancements */

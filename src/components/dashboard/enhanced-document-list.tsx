@@ -1317,9 +1317,9 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                   const StatusIcon = statusConfig.icon
 
                   return (
-                    <Card 
-                      key={document.id} 
-                      className={`group hover:shadow-md transition-all duration-200 ${
+                    <Card
+                      key={document.id}
+                      className={`card-enhanced group hover:shadow-md transition-all duration-200 ${
                         isSelectMode && selectedDocuments.has(document.id) ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-950/20' : ''
                       } ${
                         _selectedSearchSourceDocument?.id === document.id ? 'ring-2 ring-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' : ''

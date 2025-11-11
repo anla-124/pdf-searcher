@@ -62,11 +62,9 @@ export function Sidebar() {
 
   return (
     <div
-      className={`flex h-full w-64 flex-col border-r border-gray-200 dark:border-slate-700/50 sidebar-enhanced backdrop-blur-xl ${isDark ? '' : 'bg-white'
-        }`}
-      style={{
-        backgroundColor: isDark ? '#0a1329' : undefined
-      }}
+      className={`flex h-full w-64 flex-col border-r border-gray-200 dark:border-slate-700/50 sidebar-enhanced backdrop-blur-xl transition-colors duration-300 ${
+        isDark ? 'bg-[#0a1329]' : 'bg-white'
+      }`}
     >
       {/* Logo */}
       <div className="flex h-16 items-center px-6 border-b border-gray-200 dark:border-slate-700/50">

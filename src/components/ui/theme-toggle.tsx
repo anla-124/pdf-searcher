@@ -34,17 +34,17 @@ export function ThemeToggle() {
       variant="ghost"
       size="sm"
       onClick={toggleTheme}
-      className="w-full justify-start text-gray-700 dark:text-gray-300"
+      className="w-full justify-start text-gray-700 dark:text-gray-300 transition-colors duration-300"
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
     >
       {isDark ? (
         <>
-          <Sun className="mr-3 h-4 w-4" />
+          <Sun className="mr-3 h-4 w-4 transition-all duration-300" />
           Light Mode
         </>
       ) : (
         <>
-          <Moon className="mr-3 h-4 w-4" />
+          <Moon className="mr-3 h-4 w-4 transition-all duration-300" />
           Dark Mode
         </>
       )}

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export function GoogleAuthButton() {
   const [isLoading, setIsLoading] = useState(false)
@@ -92,27 +93,25 @@ export function EmailPasswordLogin() {
   return (
     <form onSubmit={handleEmailLogin} className="space-y-4">
       <div>
-        <input
+        <Input
           type="email"
           placeholder="Email (e.g., test@anduintransact.com)"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           required
         />
       </div>
       <div>
-        <input
+        <Input
           type="password"
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           required
         />
       </div>
       {error && (
-        <div className="text-red-500 text-sm">{error}</div>
+        <div className="text-red-500 dark:text-red-400 text-sm">{error}</div>
       )}
       <Button
         type="submit"
