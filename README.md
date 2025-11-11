@@ -57,6 +57,24 @@ A web application for processing PDF documents and performing similarity searche
     - Toggle **N/A** when there is no subscription agreement section; this keeps the full document.
 6.  Set up the database by running the `MASTER-DATABASE-SETUP.sql` script in your Supabase SQL Editor.
 
+### Authentication Setup
+
+The application uses Supabase for authentication with different methods for local vs production:
+
+**Local Development (localhost/127.0.0.1):**
+- Email/password authentication enabled
+- Google OAuth enabled
+- Convenient for testing without OAuth provider setup
+
+**Production Deployment:**
+- Google OAuth only (more secure)
+- Email/password form hidden automatically
+- Configure Google OAuth in Supabase dashboard:
+  1. Go to Authentication → Providers → Google
+  2. Enable Google provider
+  3. Add your production URL to Redirect URLs
+  4. Configure Client ID and Secret from Google Cloud Console
+
 ### Upload Workflow
 
 1. **Add files:** drag-and-drop or browse for PDFs (10 max per batch, 50&nbsp;MB each). Non-PDF files are rejected up front.  
