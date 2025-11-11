@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { SupabaseClient } from '@supabase/supabase-js'
+import { logger } from '@/lib/logger'
 
 // Pool configuration - UNLIMITED for enterprise processing
 interface PoolConfig {
@@ -63,12 +64,12 @@ export class SupabaseConnectionPool {
     
     // Only log initialization once
     if (!SupabaseConnectionPool.isInitialized) {
-      console.warn('🔗 Supabase Connection Pool initialized:', {
+      logger.info('Supabase Connection Pool initialized', {
         mode: this.config.unlimitedMode ? 'UNLIMITED' : 'LIMITED',
         minConnections: this.config.minConnections,
-        maxConnections: this.config.unlimitedMode ? '∞' : this.config.maxConnections,
+        maxConnections: this.config.unlimitedMode ? 'unlimited' : this.config.maxConnections,
         idleTimeout: this.config.idleTimeout,
-        connectionTimeout: this.config.connectionTimeout === 0 ? '∞' : this.config.connectionTimeout
+        connectionTimeout: this.config.connectionTimeout === 0 ? 'unlimited' : this.config.connectionTimeout
       })
       SupabaseConnectionPool.isInitialized = true
     }
@@ -165,8 +166,8 @@ export class SupabaseConnectionPool {
    * Graceful shutdown - cleanup all connections
    */
   async shutdown(): Promise<void> {
-    console.warn('🔗 Shutting down Supabase connection pool...')
-    
+    logger.info('Shutting down Supabase connection pool', { activeConnections: this.metrics.activeConnections })
+
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval)
     }
@@ -177,11 +178,11 @@ export class SupabaseConnectionPool {
       // but we can clear references
       connection.isActive = false
     }
-    
+
     this.servicePool = []
     this.sessionPools.clear()
-    
-    console.warn('🔗 Connection pool shutdown complete')
+
+    logger.info('Connection pool shutdown complete')
   }
 
   // Private methods
@@ -279,7 +280,7 @@ export class SupabaseConnectionPool {
     })
 
     if (connectionsToRemove.length > 0) {
-      console.warn(`🔗 Cleaned up ${connectionsToRemove.length} idle connections`)
+      logger.info('Cleaned up idle connections', { connectionsRemoved: connectionsToRemove.length })
     }
   }
 }

@@ -68,6 +68,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate signed URLs for both documents (1 hour expiry)
+    // SUPABASE_PUBLIC_URL is only used in local development with ngrok/localtunnel
+    // In production, leave it unset - production Supabase URLs work directly with Draftable
+    const supabasePublicUrl = process.env.SUPABASE_PUBLIC_URL
+
     const { data: sourceUrl, error: sourceUrlError } = await supabase.storage
       .from('documents')
       .createSignedUrl(sourceDoc.file_path, 3600)
@@ -94,6 +98,19 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
 
+    // Replace localhost URL with ngrok URL if configured
+    let sourceUrlForDraftable = sourceUrl.signedUrl
+    let targetUrlForDraftable = targetUrl.signedUrl
+
+    if (supabasePublicUrl) {
+      sourceUrlForDraftable = sourceUrl.signedUrl.replace('http://127.0.0.1:54321', supabasePublicUrl)
+      targetUrlForDraftable = targetUrl.signedUrl.replace('http://127.0.0.1:54321', supabasePublicUrl)
+
+      logger.debug('Using public URL for Draftable access', {
+        publicUrl: supabasePublicUrl
+      })
+    }
+
     // Determine file type from content_type
     type DraftableFileType = 'pdf' | 'docx' | 'docm' | 'doc' | 'rtf' | 'pptx' | 'pptm' | 'ppt' | 'txt'
     const getFileType = (contentType: string): DraftableFileType => {
@@ -112,23 +129,35 @@ export async function POST(request: NextRequest) {
       sourceTitle: sourceDoc.title,
       targetTitle: targetDoc.title,
       sourceFileType: getFileType(sourceDoc.content_type),
-      targetFileType: getFileType(targetDoc.content_type)
+      targetFileType: getFileType(targetDoc.content_type),
+      // Only log full URLs in development (they contain signed tokens)
+      ...(process.env.NODE_ENV === 'development' && {
+        sourceUrl: sourceUrlForDraftable,
+        targetUrl: targetUrlForDraftable
+      })
     })
 
-    const comparison = await draftableClient.comparisons.create({
+    // Create comparison with timeout (30 seconds)
+    const comparisonPromise = draftableClient.comparisons.create({
       left: {
-        source: sourceUrl.signedUrl,
+        source: sourceUrlForDraftable,
         fileType: getFileType(sourceDoc.content_type),
         displayName: sourceDoc.title
       },
       right: {
-        source: targetUrl.signedUrl,
+        source: targetUrlForDraftable,
         fileType: getFileType(targetDoc.content_type),
         displayName: targetDoc.title
       },
       // Set comparison to expire in 2 hours
       expires: new Date(Date.now() + 1000 * 60 * 120)
     })
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Draftable API request timed out after 30 seconds')), 30000)
+    )
+
+    const comparison = await Promise.race([comparisonPromise, timeoutPromise]) as Awaited<typeof comparisonPromise>
 
     logger.info('Draftable comparison created successfully', {
       identifier: comparison.identifier,
@@ -138,11 +167,20 @@ export async function POST(request: NextRequest) {
     })
 
     // Generate signed viewer URL (valid for 1 hour)
+    const validUntil = Date.now() + 1000 * 60 * 60 // 1 hour validity (timestamp in milliseconds)
     const viewerUrl = draftableClient.comparisons.signedViewerURL(
       comparison.identifier,
-      new Date(Date.now() + 1000 * 60 * 60), // 1 hour validity
-      false // wait=false (don't wait for comparison to be ready)
+      validUntil,
+      true // wait=true (wait for comparison to be ready before redirecting)
     )
+
+    logger.debug('Generated Draftable viewer URL', {
+      identifier: comparison.identifier,
+      validUntil,
+      validUntilSeconds: Math.floor(validUntil / 1000),
+      // Only log full viewer URL in development (contains signature)
+      ...(process.env.NODE_ENV === 'development' && { viewerUrl })
+    })
 
     return NextResponse.json({
       success: true,
@@ -155,7 +193,9 @@ export async function POST(request: NextRequest) {
     logger.error('Draftable comparison error', error as Error)
     return NextResponse.json({
       error: 'Failed to create comparison',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      ...(process.env.NODE_ENV === 'development' && {
+        details: error instanceof Error ? error.message : 'Unknown error'
+      })
     }, { status: 500 })
   }
 }

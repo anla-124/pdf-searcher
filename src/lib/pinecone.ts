@@ -1,8 +1,9 @@
 import { Pinecone } from '@pinecone-database/pinecone'
 import { createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
-import type { 
-  BusinessMetadata 
+import type {
+  BusinessMetadata
 } from '@/types/external-apis'
+import { logger } from '@/lib/logger'
 
 // Lazy initialization to avoid errors during build
 let pinecone: Pinecone | null = null
@@ -86,10 +87,10 @@ export async function indexDocumentInPinecone(
       values: vector,
       metadata: sanitizedMetadata
     }])
-    
-    console.warn(`✅ Indexed document chunk ${id}`)
+
+    logger.info('Indexed document chunk in Pinecone', { chunkId: id })
   } catch (error) {
-    console.error(`❌ Failed to index document chunk ${id}:`, error)
+    logger.error('Failed to index document chunk in Pinecone', error as Error, { chunkId: id })
     throw error
   }
 }
@@ -159,11 +160,11 @@ export async function searchSimilarDocuments(
       })
     }
 
-    console.warn(`🔍 Found ${results.length} similar documents for ${documentId}`)
+    logger.info('Similarity search completed', { sourceDocumentId: documentId, resultsCount: results.length })
     return results
 
   } catch (error) {
-    console.error(`❌ Similarity search failed for ${documentId}:`, error)
+    logger.error('Similarity search failed', error as Error, { documentId })
     throw error
   }
 }
@@ -217,11 +218,11 @@ export async function vectorSearch(
       })
     }
 
-    console.warn(`🔍 Vector search returned ${results.length} results`)
+    logger.info('Vector search completed', { resultsCount: results.length })
     return results
 
   } catch (error) {
-    console.error(`❌ Vector search failed:`, error)
+    logger.error('Vector search failed', error as Error)
     throw error
   }
 }
@@ -236,7 +237,7 @@ export async function deleteDocumentFromPinecone(documentId: string, presetVecto
       : await fetchVectorIdsFromSupabase(documentId)
 
     if (!vectorIds || vectorIds.length === 0) {
-      console.warn(`No vector IDs available for document ${documentId}, nothing to delete from Pinecone.`)
+      logger.warn('No vector IDs available for document deletion', { documentId })
       return
     }
 
@@ -249,13 +250,18 @@ export async function deleteDocumentFromPinecone(documentId: string, presetVecto
       totalAttempted += batch.length
 
       if (vectorIds.length > BATCH_SIZE) {
-        console.warn(`  Deleted batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(vectorIds.length / BATCH_SIZE)}: ${batch.length} vector IDs`)
+        logger.info('Deleted vector batch', {
+          documentId,
+          batchNumber: Math.floor(i / BATCH_SIZE) + 1,
+          totalBatches: Math.ceil(vectorIds.length / BATCH_SIZE),
+          batchSize: batch.length
+        })
       }
     }
 
-    console.warn(`✅ Deleted ${totalAttempted} vectors for document ${documentId} from Pinecone`)
+    logger.info('Successfully deleted all vectors from Pinecone', { documentId, vectorsDeleted: totalAttempted })
   } catch (error) {
-    console.error(`❌ Failed to delete vectors for document ${documentId}:`, error)
+    logger.error('Failed to delete vectors from Pinecone', error as Error, { documentId })
     throw error
   }
 }
@@ -296,8 +302,8 @@ export async function updateDocumentMetadataInPinecone(
   newMetadata: Record<string, unknown>
 ): Promise<void> {
   try {
-    console.warn(`📝 Starting Pinecone metadata update for document ${documentId}`)
-    
+    logger.info('Starting Pinecone metadata update', { documentId })
+
     // 1. Get all vector IDs from the database
     // CRITICAL: Override Supabase's default 1000 row limit to get ALL chunks
     const supabase = await createServiceClient()
@@ -313,7 +319,7 @@ export async function updateDocumentMetadataInPinecone(
       }
 
       if (!chunks || chunks.length === 0) {
-        console.warn(`No chunks found for document ${documentId}, skipping Pinecone update.`)
+        logger.warn('No chunks found for Pinecone metadata update', { documentId })
         return
       }
 
@@ -332,7 +338,7 @@ export async function updateDocumentMetadataInPinecone(
     }
 
     if (vectors.length === 0) {
-      console.warn(`No vectors found in Pinecone for document ${documentId}, skipping update.`)
+      logger.warn('No vectors found in Pinecone for metadata update', { documentId })
       return
     }
 
@@ -352,13 +358,13 @@ export async function updateDocumentMetadataInPinecone(
     // 4. Upsert the vectors back into Pinecone
     await getPineconeIndex().upsert(updatedVectors)
 
-      console.warn(`✅ Successfully updated metadata for ${updatedVectors.length} vectors in Pinecone for document ${documentId}`)
-    
+      logger.info('Successfully updated metadata in Pinecone', { documentId, vectorsUpdated: updatedVectors.length })
+
     } finally {
       releaseServiceClient(supabase)
     }
   } catch (error) {
-    console.error(`❌ Failed to update metadata for document ${documentId}:`, error)
+    logger.error('Failed to update Pinecone metadata', error as Error, { documentId })
     // In a production scenario, you might want to queue this for a retry
     throw error
   }
@@ -391,7 +397,11 @@ async function getDocumentVector(
         $gte: pageRange.start_page,
         $lte: pageRange.end_page
       }
-      console.warn(`🔍 Fetching vectors for document ${documentId}, pages ${pageRange.start_page}-${pageRange.end_page}`)
+      logger.info('Fetching vectors with page range', {
+        documentId,
+        startPage: pageRange.start_page,
+        endPage: pageRange.end_page
+      })
     }
 
     const queryResponse = await getPineconeIndex().query({
@@ -403,7 +413,10 @@ async function getDocumentVector(
     })
 
     if (!queryResponse.matches || queryResponse.matches.length === 0) {
-      console.warn(`⚠️ No vectors found for document ${documentId}${pageRange ? ` in page range ${pageRange.start_page}-${pageRange.end_page}` : ''}`)
+      logger.warn('No vectors found for document', {
+        documentId,
+        pageRange: pageRange ? `${pageRange.start_page}-${pageRange.end_page}` : undefined
+      })
       return null
     }
 
@@ -415,7 +428,12 @@ async function getDocumentVector(
 
       if (vectors.length === 0) return null
 
-      console.warn(`📊 Computing centroid from ${vectors.length} vectors in page range ${pageRange.start_page}-${pageRange.end_page}`)
+      logger.info('Computing centroid from page range vectors', {
+        documentId,
+        vectorCount: vectors.length,
+        startPage: pageRange.start_page,
+        endPage: pageRange.end_page
+      })
 
       const firstVector = vectors[0]
       if (!firstVector) return null
@@ -453,7 +471,7 @@ async function getDocumentVector(
 
     return null
   } catch (error) {
-    console.error(`❌ Failed to get vector for document ${documentId}:`, error)
+    logger.error('Failed to get vector for document', error as Error, { documentId })
     return null
   }
 }
@@ -470,7 +488,7 @@ export async function getPineconeStats() {
       indexFullness: stats.indexFullness
     }
   } catch (error) {
-    console.error('❌ Failed to get Pinecone stats:', error)
+    logger.error('Failed to get Pinecone stats', error as Error)
     return null
   }
 }

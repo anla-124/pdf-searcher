@@ -3,6 +3,7 @@
  * CRITICAL: All embeddings should be L2 normalized ONCE at write time
  * Never normalize on reads - cosine similarity = dot product for normalized vectors
  */
+import { logger } from '@/lib/logger'
 
 /**
  * L2 normalization - CALL ONCE AT WRITE TIME
@@ -12,7 +13,7 @@ export function l2Normalize(vector: number[]): number[] {
   const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0))
 
   if (magnitude === 0) {
-    console.warn('Warning: Attempting to normalize zero vector')
+    logger.warn('Attempting to normalize zero vector', { vectorLength: vector.length })
     return vector
   }
 

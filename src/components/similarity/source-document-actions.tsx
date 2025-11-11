@@ -24,7 +24,7 @@ const openInNewTab = async (doc: AppDocument) => {
     // Clean up after the new tab has a chance to load the blob URL.
     setTimeout(() => window.URL.revokeObjectURL(url), 500)
   } catch (error) {
-    console.error(error)
+    console.error('[SourceDocumentActions] Failed to open document:', error instanceof Error ? error.message : 'Unknown error', { documentId: doc.id })
     alert('Failed to open document. Please try again.')
   }
 }
@@ -46,7 +46,7 @@ const downloadDocument = async (doc: AppDocument) => {
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
   } catch (error) {
-    console.error(error)
+    console.error('[SourceDocumentActions] Failed to download document:', error instanceof Error ? error.message : 'Unknown error', { documentId: doc.id, filename: doc.filename })
     alert('Failed to download document. Please try again.')
   }
 }

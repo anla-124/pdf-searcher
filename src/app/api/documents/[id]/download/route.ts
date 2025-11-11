@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { logger } from '@/lib/logger'
 
 export async function GET(
   request: NextRequest,
@@ -41,7 +42,7 @@ export async function GET(
       .download(filePath)
 
     if (downloadError || !fileData) {
-      console.error('Storage download error:', downloadError)
+      logger.error('Storage download error', downloadError as Error, { documentId: id, filePath })
       return NextResponse.json({ error: 'Failed to download file' }, { status: 500 })
     }
 
@@ -58,7 +59,7 @@ export async function GET(
     })
 
   } catch (error) {
-    console.error('Document download error:', error)
+    logger.error('Document download error', error as Error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

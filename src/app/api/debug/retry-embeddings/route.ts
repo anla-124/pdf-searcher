@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { generateAndIndexEmbeddings } from '@/lib/document-processing'
 import { computeAndStoreCentroid } from '@/lib/document-processing'
 import { DEFAULT_CHUNK_STRIDE } from '@/lib/constants/chunking'
+import { logger } from '@/lib/logger'
 
 export async function POST(_request: NextRequest) {
   try {
@@ -34,10 +35,10 @@ export async function POST(_request: NextRequest) {
       })
     }
 
-    console.warn(`🔄 Retrying embeddings for ${documentsToFix.length} documents`)
+    logger.info('Retrying embeddings for documents', { documentCount: documentsToFix.length })
 
     const results = []
-    
+
     for (const doc of documentsToFix) {
       const documentId = typeof doc.id === 'string' ? doc.id : null
       const extractedText = typeof doc.extracted_text === 'string' ? doc.extracted_text : ''
@@ -46,7 +47,7 @@ export async function POST(_request: NextRequest) {
       }
 
       try {
-        console.warn(`🔄 Generating embeddings for document: ${doc.title ?? documentId}`)
+        logger.info('Generating embeddings for document', { documentId, title: doc.title })
 
         // Generate embeddings using the legacy function (simpler, no page tracking needed)
         await generateAndIndexEmbeddings(documentId, extractedText)
@@ -73,10 +74,10 @@ export async function POST(_request: NextRequest) {
           status: 'success'
         })
 
-        console.warn(`✅ Successfully generated embeddings for: ${doc.title ?? documentId}`)
+        logger.info('Successfully generated embeddings', { documentId, title: doc.title })
 
       } catch (error) {
-        console.error(`❌ Failed to generate embeddings for ${doc.title ?? documentId}:`, error)
+        logger.error('Failed to generate embeddings', error as Error, { documentId, title: doc.title })
         results.push({
           documentId: documentId ?? 'unknown',
           title: doc.title,
@@ -85,10 +86,10 @@ export async function POST(_request: NextRequest) {
         })
       }
     }
-    
+
     const successful = results.filter(r => r.status === 'success').length
     const failed = results.filter(r => r.status === 'failed').length
-    
+
     return NextResponse.json({
       message: `Embedding retry completed: ${successful} successful, ${failed} failed`,
       totalProcessed: documentsToFix.length,
@@ -96,9 +97,9 @@ export async function POST(_request: NextRequest) {
       failed,
       results
     })
-    
+
   } catch (error) {
-    console.error('Embedding retry error:', error)
+    logger.error('Embedding retry error', error as Error)
     return NextResponse.json({ 
       error: 'Failed to retry embeddings',
       details: error instanceof Error ? error.message : 'Unknown error'

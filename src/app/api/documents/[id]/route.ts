@@ -243,7 +243,7 @@ export async function PATCH(
       .maybeSingle<DatabaseDocumentWithContent>()
 
     if (updateError) {
-      console.error('Database update error:', updateError)
+      logger.error('Database update error', updateError as Error, { documentId: id })
       return NextResponse.json({ error: 'Failed to update document' }, { status: 500 })
     }
 

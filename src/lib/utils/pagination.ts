@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { GenericSupabaseSchema } from '@/types/supabase'
+import { logger } from '@/lib/logger'
 
 export interface PaginationParams {
   page: number
@@ -217,12 +218,12 @@ export class DatabasePagination {
     }
     
     const { count, error } = await query
-    
+
     if (error) {
-      console.error('Total count query error:', error)
+      logger.error('Total count query error', error, { tableName, filters })
       return 0
     }
-    
+
     return count || 0
   }
 }

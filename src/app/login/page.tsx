@@ -1,10 +1,14 @@
 'use client'
 
-import { GoogleAuthButton } from '@/components/auth/oauth-buttons'
+import { GoogleAuthButton, EmailPasswordLogin } from '@/components/auth/oauth-buttons'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import Image from 'next/image'
 
 export default function LoginPage() {
+  // Check if we're in local development mode
+  const isLocalDev = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
       <div className="w-full max-w-md">
@@ -27,10 +31,28 @@ export default function LoginPage() {
           <CardHeader className="space-y-1 pb-6">
             <CardTitle className="text-xl text-center text-gray-900 dark:text-white">Welcome to PDF Searcher</CardTitle>
             <CardDescription className="text-center text-gray-600 dark:text-gray-400">
-              Sign in with your Google account to get started
+              {isLocalDev
+                ? 'Sign in with email or Google to get started'
+                : 'Sign in with your Google account to get started'
+              }
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {isLocalDev && (
+              <>
+                <EmailPasswordLogin />
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t border-gray-300 dark:border-gray-600" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-white dark:bg-gray-900 px-2 text-gray-500 dark:text-gray-400">
+                      Or continue with
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
             <GoogleAuthButton />
           </CardContent>
         </Card>

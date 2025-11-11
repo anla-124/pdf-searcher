@@ -2,6 +2,7 @@
 import { GoogleAuth } from 'google-auth-library'
 import { getGoogleClientOptions } from '@/lib/google-credentials'
 import type { VertexAIEmbeddingResponse } from '@/types/external-apis'
+import { logger } from '@/lib/logger'
 
 const clientOptions = getGoogleClientOptions()
 const auth = new GoogleAuth({
@@ -18,7 +19,7 @@ export async function generateVertexEmbeddings(text: string): Promise<number[]> 
       throw new Error('Text is empty after cleaning')
     }
 
-    console.warn('Generating Vertex AI embeddings for text length:', truncatedText.length)
+    logger.info('Generating Vertex AI embeddings', { textLength: truncatedText.length })
 
     const client = await auth.getClient()
     const projectId = process.env['GOOGLE_CLOUD_PROJECT_ID']!
@@ -48,9 +49,9 @@ export async function generateVertexEmbeddings(text: string): Promise<number[]> 
         return embeddings
       }
     } catch (modelError: unknown) {
-      console.warn('text-embedding-004 failed, trying gecko model:', 
-        modelError instanceof Error && 'status' in modelError ? (modelError as { status: number }).status : 'unknown error')
-      
+      const status = modelError instanceof Error && 'status' in modelError ? (modelError as { status: number }).status : 'unknown'
+      logger.warn('text-embedding-004 failed, trying gecko model', { status })
+
       // Fallback to gecko model with different structure
       url = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict`
       
@@ -78,9 +79,9 @@ export async function generateVertexEmbeddings(text: string): Promise<number[]> 
 
     return embeddings
   } catch (error: unknown) {
-    console.error('Error generating Vertex AI embeddings:', error)
-    
-    const statusCode = error instanceof Error && 'status' in error ? (error as { status: number }).status : null
+    const statusCode = error instanceof Error && 'status' in error ? (error as { status: number }).status : undefined
+    logger.error('Error generating Vertex AI embeddings', error as Error, { statusCode })
+
     
     if (statusCode === 403) {
       throw new Error('Vertex AI API not enabled. Enable it at: https://console.cloud.google.com/apis/library/aiplatform.googleapis.com')

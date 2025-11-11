@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { logger } from '@/lib/logger'
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
@@ -28,8 +29,10 @@ export async function GET(request: Request) {
         }
       }
     }
-    
-    console.error('Auth callback error:', error)
+
+    if (error) {
+      logger.error('Auth callback error', error as Error, { code: code?.substring(0, 10) })
+    }
   }
 
   // Return the user to an error page with instructions

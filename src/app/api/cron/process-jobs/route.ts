@@ -143,7 +143,58 @@ async function processJob(
       let document: DocumentJobJoin | null = Array.isArray(joinedDocument)
         ? joinedDocument[0] ?? null
         : joinedDocument ?? null
-      
+
+      /*
+       * =======================================================================
+       * WORKAROUND: JOIN Query Fallback for Missing Document Data
+       * =======================================================================
+       *
+       * EXPECTED BEHAVIOR:
+       * The main query (lines 534-561) uses `documents!inner (...)` to JOIN
+       * document_jobs with documents table. This should ALWAYS return the
+       * document data since we're using an INNER JOIN.
+       *
+       * ACTUAL PROBLEM:
+       * Occasionally, `job.documents` is null/empty even when:
+       * 1. The document exists in the documents table
+       * 2. The document_id foreign key is valid
+       * 3. We're using service_role client (should bypass RLS)
+       *
+       * ROOT CAUSE ANALYSIS:
+       * This suggests one of the following issues at the database level:
+       *
+       * 1. RLS POLICIES: Row Level Security policies may be incorrectly configured
+       *    on the documents table, causing the JOIN to fail even for service_role.
+       *    - Check: Does documents table have RLS enabled?
+       *    - Check: Are RLS policies correctly configured for service_role bypass?
+       *
+       * 2. FOREIGN KEY CONSTRAINTS: The document_id in document_jobs might not
+       *    have proper foreign key constraints, allowing orphaned references.
+       *
+       * 3. USER_ID MISMATCH: The user_id in document_jobs might not match the
+       *    user_id in documents, causing JOIN to fail if RLS is user-scoped.
+       *
+       * WORKAROUND STRATEGY:
+       * When JOIN fails to return document:
+       * 1. Attempt direct query to documents table (bypassing JOIN)
+       * 2. Log comprehensive diagnostics to identify root cause
+       * 3. If document exists independently, use it to continue processing
+       * 4. If document doesn't exist at all, fail with data integrity error
+       *
+       * PROPER FIX (TODO):
+       * This is a temporary workaround. The proper fix requires database-level changes:
+       * - Review and fix RLS policies on documents table
+       * - Ensure service_role client properly bypasses RLS for JOINs
+       * - Add/verify foreign key constraint: document_jobs.document_id -> documents.id
+       * - Consider adding database trigger to prevent user_id mismatches
+       *
+       * TRACKING:
+       * TODO(database): Fix RLS policies to prevent JOIN query failures
+       * TODO(database): Add foreign key constraint on document_jobs.document_id
+       * TODO(monitoring): Add alert when fallback is triggered (indicates DB issue)
+       *
+       * =======================================================================
+       */
       if (!document) {
         // Debug: Check if document exists independently
         const { data: directDocument, error: directError } = await supabase

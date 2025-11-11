@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { poolHealthCheck, getPoolMetrics, getPoolConfig } from '@/lib/supabase/server'
 import { throttling } from '@/lib/concurrency-limiter'
 import { getPineconeCleanupMetrics } from '@/lib/pinecone-cleanup-worker'
+import { logger } from '@/lib/logger'
 
 export async function GET(_request: NextRequest) {
   try {
@@ -46,7 +47,7 @@ export async function GET(_request: NextRequest) {
       }
     })
   } catch (error) {
-    console.error('Pool health check failed:', error)
+    logger.error('Pool health check failed', error as Error)
     return NextResponse.json({
       status: 'error',
       timestamp: new Date().toISOString(),

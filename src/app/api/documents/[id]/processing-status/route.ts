@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { logger } from '@/lib/logger'
 
 export async function GET(
   request: NextRequest,
@@ -40,7 +41,7 @@ export async function GET(
       .single()
 
     if (statusError && statusError.code !== 'PGRST116') {
-      console.error('Error fetching processing status:', statusError)
+      logger.error('Error fetching processing status', statusError as Error, { documentId: id })
       return NextResponse.json({ error: 'Failed to fetch processing status' }, { status: 500 })
     }
 
@@ -64,7 +65,7 @@ export async function GET(
     return NextResponse.json(response)
 
   } catch (error) {
-    console.error('Processing status error:', error)
+    logger.error('Processing status error', error as Error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

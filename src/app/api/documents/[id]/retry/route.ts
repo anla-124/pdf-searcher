@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient, releaseServiceClient } from '@/lib/supabase/server'
 import { queueDocumentProcessingJob, processUploadedDocument } from '@/lib/upload-optimization'
+import { logger } from '@/lib/logger'
 
 function triggerCronProcessing(request: NextRequest) {
   const cronSecret = process.env['CRON_SECRET']
   if (!cronSecret) {
-    console.warn('⚠️ CRON_SECRET not set; skipping auto-trigger of cron job')
+    logger.warn('CRON_SECRET not set; skipping auto-trigger of cron job')
     return
   }
 
@@ -19,16 +20,16 @@ function triggerCronProcessing(request: NextRequest) {
       }
     }).then(response => {
       if (!response.ok) {
-        console.warn('Auto-triggered cron job returned non-OK response', {
+        logger.warn('Auto-triggered cron job returned non-OK response', {
           status: response.status,
           statusText: response.statusText
         })
       }
     }).catch(error => {
-      console.warn('Auto-triggered cron job failed', error)
+      logger.warn('Auto-triggered cron job failed', { error: error instanceof Error ? error.message : String(error) })
     })
   } catch (error) {
-    console.warn('Failed to construct cron trigger URL', error)
+    logger.warn('Failed to construct cron trigger URL', { error: error instanceof Error ? error.message : String(error) })
   }
 }
 
@@ -56,7 +57,7 @@ export async function POST(
       if (documentError.code === 'PGRST116') {
         return NextResponse.json({ error: 'Document not found' }, { status: 404 })
       }
-      console.error('Failed to fetch document for retry:', documentError)
+      logger.error('Failed to fetch document for retry', documentError as Error, { documentId: id })
       return NextResponse.json({ error: 'Failed to fetch document' }, { status: 500 })
     }
 
@@ -96,7 +97,7 @@ export async function POST(
         .in('status', ['queued', 'processing'])
 
       if (activeJobsError) {
-        console.error('Failed to inspect existing jobs for retry:', activeJobsError)
+        logger.error('Failed to inspect existing jobs for retry', activeJobsError as Error, { documentId: id })
         return NextResponse.json({ error: 'Failed to prepare document retry' }, { status: 500 })
       }
 
@@ -120,7 +121,7 @@ export async function POST(
         .eq('id', id)
 
       if (updateError) {
-        console.error('Failed to update document before retry:', updateError)
+        logger.error('Failed to update document before retry', updateError as Error, { documentId: id })
         return NextResponse.json({ error: 'Failed to prepare document for retry' }, { status: 500 })
       }
 
@@ -134,7 +135,7 @@ export async function POST(
         })
 
       if (statusInsertError) {
-        console.warn('Failed to log processing status for retry:', statusInsertError)
+        logger.warn('Failed to log processing status for retry', { documentId: id, error: statusInsertError })
       }
     } finally {
       releaseServiceClient(serviceClient)
@@ -174,7 +175,7 @@ export async function POST(
         metadata: cleanedMetadata || {},
         sizeAnalysis
       }).catch(error => {
-        console.error(`Background retry processing failed for ${id}:`, error)
+        logger.error('Background retry processing failed', error as Error, { documentId: id })
       })
     }
 
@@ -193,7 +194,7 @@ export async function POST(
     })
 
   } catch (error) {
-    console.error('Document retry error:', error)
+    logger.error('Document retry error', error as Error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

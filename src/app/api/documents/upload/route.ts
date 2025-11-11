@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { processUploadedDocument, queueDocumentProcessingJob } from '@/lib/upload-optimization'
 import { throttling } from '@/lib/concurrency-limiter'
+import { validateFileFromFormData } from '@/lib/utils/validation-helpers'
+import { unauthorizedError, validationError, databaseError, handleApiError } from '@/lib/utils/api-response'
+import { logger } from '@/lib/logger'
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,35 +13,20 @@ export async function POST(request: NextRequest) {
     // Check authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return unauthorizedError()
     }
 
     return throttling.upload.run(user.id, async () => {
       const formData = await request.formData()
-      const file = formData.get('file') as File
+
+      // Validate file using shared validation utility
+      const fileOrError = await validateFileFromFormData(formData, 'file')
+      if (fileOrError instanceof NextResponse) {
+        return fileOrError
+      }
+      const file = fileOrError
+
       const metadataString = formData.get('metadata') as string
-      
-      if (!file) {
-        return NextResponse.json(
-          { error: 'No file provided' }, 
-          { status: 400 }
-        )
-      }
-
-      // Basic validation
-      if (!file.name.toLowerCase().endsWith('.pdf')) {
-        return NextResponse.json(
-          { error: 'Only PDF files are supported' },
-          { status: 400 }
-        )
-      }
-
-      if (file.size > 50 * 1024 * 1024) { // 50MB limit
-        return NextResponse.json(
-          { error: 'File size exceeds 50MB limit' },
-          { status: 400 }
-        )
-      }
 
       // Parse metadata if provided
       let metadata: Record<string, unknown> = {}
@@ -51,11 +39,8 @@ export async function POST(request: NextRequest) {
             throw new Error('Metadata must be an object')
           }
         } catch (error) {
-          console.error('Invalid metadata format:', error)
-          return NextResponse.json(
-            { error: 'Invalid metadata format' }, 
-            { status: 400 }
-          )
+          logger.error('Invalid metadata format', error as Error)
+          return validationError('Invalid metadata format', error instanceof Error ? error.message : undefined)
         }
       }
 
@@ -64,7 +49,7 @@ export async function POST(request: NextRequest) {
       const fileName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${fileExt}`
       const filePath = `${user.id}/${fileName}`
 
-      console.warn(`📤 Uploading file ${file.name} for user ${user.email}`)
+      logger.info('Uploading file', { filename: file.name, userEmail: user.email, fileSize: file.size })
 
       // Upload to Supabase Storage
       const { data: uploadData, error: uploadError } = await supabase.storage
@@ -76,11 +61,8 @@ export async function POST(request: NextRequest) {
         })
 
       if (uploadError) {
-        console.error('Storage upload error:', uploadError)
-        return NextResponse.json(
-          { error: 'Failed to upload file' }, 
-          { status: 500 }
-        )
+        logger.error('Storage upload error', uploadError as Error, { filePath })
+        return databaseError('Failed to upload file', uploadError.message)
       }
 
       // Create document record
@@ -100,22 +82,19 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (dbError) {
-        console.error('Database error:', dbError)
+        logger.error('Database error creating document record', dbError as Error, { filePath: uploadData.path })
         // Clean up uploaded file
         await supabase.storage.from('documents').remove([uploadData.path])
-        return NextResponse.json(
-          { error: 'Failed to create document record' }, 
-          { status: 500 }
-        )
+        return databaseError('Failed to create document record', dbError.message)
       }
 
       if (!document || typeof document.id !== 'string') {
-        console.error('Invalid document record returned from insert', { document })
+        logger.error('Invalid document record returned from insert', new Error('Invalid document'), { document })
         await supabase.storage.from('documents').remove([uploadData.path])
-        return NextResponse.json({ error: 'Failed to create document record' }, { status: 500 })
+        return databaseError('Failed to create document record')
       }
 
-      console.warn(`✅ Document record created: ${document.id}`)
+      logger.info('Document record created', { documentId: document.id, filename: file.name })
 
       const documentId = document.id
       const documentFilename = typeof document.filename === 'string' ? document.filename : file.name
@@ -145,7 +124,7 @@ export async function POST(request: NextRequest) {
           metadata,
           sizeAnalysis
         }).catch(error => {
-          console.error(`Background processing failed for ${documentId}:`, error)
+          logger.error('Background processing failed', error as Error, { documentId })
         })
       }
 
@@ -166,15 +145,15 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Upload error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error('Upload error', error as Error)
+    return handleApiError(error, 'Failed to upload document')
   }
 }
 
 function triggerCronProcessing(request: NextRequest) {
   const cronSecret = process.env['CRON_SECRET']
   if (!cronSecret) {
-    console.warn('⚠️ CRON_SECRET not set; skipping auto-trigger of cron job')
+    logger.warn('CRON_SECRET not set; skipping auto-trigger of cron job')
     return
   }
 
@@ -188,15 +167,15 @@ function triggerCronProcessing(request: NextRequest) {
       }
     }).then(response => {
       if (!response.ok) {
-        console.warn('Auto-triggered cron job returned non-OK response', {
+        logger.warn('Auto-triggered cron job returned non-OK response', {
           status: response.status,
           statusText: response.statusText
         })
       }
     }).catch(error => {
-      console.warn('Auto-triggered cron job failed', error)
+      logger.warn('Auto-triggered cron job failed', { error: error instanceof Error ? error.message : String(error) })
     })
   } catch (error) {
-    console.warn('Failed to construct cron trigger URL', error)
+    logger.warn('Failed to construct cron trigger URL', { error: error instanceof Error ? error.message : String(error) })
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logger } from '@/lib/logger'
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,7 +10,7 @@ export async function GET(request: NextRequest) {
       }, { status: 403 })
     }
 
-    console.warn('🧪 Manual job processing triggered via test endpoint')
+    logger.info('Manual job processing triggered via test endpoint')
 
     // Create the URL for the cron endpoint
     const baseUrl = new URL(request.url).origin
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('❌ Test endpoint error:', error)
+    logger.error('Test endpoint error', error as Error)
     return NextResponse.json({ 
       testTrigger: true,
       error: 'Failed to trigger job processing',

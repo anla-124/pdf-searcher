@@ -1,6 +1,7 @@
 import { analyzeDocumentSize, estimateProcessingTime, type DocumentSizeAnalysis } from '@/lib/document-size-strategies'
 import { createServiceClient } from '@/lib/supabase/server'
 import { processDocument } from '@/lib/document-processing'
+import { logger } from '@/lib/logger'
 
 export interface SimpleUploadTask {
   documentId: string
@@ -183,45 +184,22 @@ export async function queueDocumentProcessingJob(task: SimpleUploadTask): Promis
     }
   }
 
-  const attemptInsert = async (payload: Record<string, unknown>) => {
-    return await supabase
-      .from('document_jobs')
-      .insert(payload)
-      .select('id')
-      .single()
+  // Insert job into queue
+  const { data, error: insertError } = await supabase
+    .from('document_jobs')
+    .insert(baseJobPayload)
+    .select('id')
+    .single()
+
+  if (insertError) {
+    logger.error('Failed to queue document processing job', insertError, {
+      documentId: task.documentId,
+      userId: task.userId,
+      errorMessage: insertError.message
+    })
+    throw new Error(`Failed to queue document job: ${insertError.message}`)
   }
 
-  let insertResult = await attemptInsert({
-    ...baseJobPayload,
-    operation_type: 'document_ai_processing'
-  })
-
-  if (insertResult.error) {
-    const firstError = insertResult.error
-    const firstMessage = firstError.message || 'Unknown error'
-
-    if (firstMessage.includes("'operation_type' column") || firstMessage.includes('schema cache')) {
-      insertResult = await attemptInsert({
-        ...baseJobPayload,
-        job_type: 'document_ai_processing'
-      })
-    }
-
-    if (insertResult.error) {
-      const secondMessage = insertResult.error.message || firstMessage
-
-      if (secondMessage.includes("'job_type' column") || secondMessage.includes('schema cache')) {
-        console.warn('⚠️ Document job queue schema missing enterprise columns; falling back to direct processing.', {
-          message: secondMessage
-        })
-        return { sizeAnalysis }
-      }
-
-      throw new Error(`Failed to queue document job: ${secondMessage}`)
-    }
-  }
-
-  const data = insertResult.data
   const jobId = data && typeof data.id === 'string' ? data.id : undefined
 
   await updateDocumentStatus(task.documentId, 'queued')
@@ -231,7 +209,7 @@ export async function queueDocumentProcessingJob(task: SimpleUploadTask): Promis
 }
 
 export async function processUploadedDocument(task: SimpleUploadTask): Promise<void> {
-  console.warn(`📄 Processing document ${task.documentId}`)
+  logger.info('Processing document', { documentId: task.documentId, jobId: task.jobId })
 
   const jobId = task.jobId
   const sizeAnalysis = task.sizeAnalysis ?? analyzeDocumentSize(
@@ -255,7 +233,7 @@ export async function processUploadedDocument(task: SimpleUploadTask): Promise<v
       try {
         await markJobProcessing(jobId)
       } catch (jobError) {
-        console.error(`Failed to mark job ${jobId} as processing:`, jobError)
+        logger.error('Failed to mark job as processing', jobError as Error, { jobId })
       }
     }
 
@@ -275,24 +253,24 @@ export async function processUploadedDocument(task: SimpleUploadTask): Promise<v
           tier: sizeAnalysis.tier
         })
       } catch (jobError) {
-        console.error(`Failed to mark job ${jobId} as completed:`, jobError)
+        logger.error('Failed to mark job as completed', jobError as Error, { jobId })
       }
     }
 
-    console.warn(`✅ Document ${task.documentId} processed successfully`)
+    logger.info('Document processed successfully', { documentId: task.documentId })
   } catch (error) {
-    console.error(`❌ Document processing failed for ${task.documentId}:`, error)
+    logger.error('Document processing failed', error as Error, { documentId: task.documentId })
 
     await updateDocumentStatus(task.documentId, 'error', {
       processing_error: error instanceof Error ? error.message : 'Unknown error'
-    }).catch(console.error)
+    }).catch((err) => logger.error('Failed to update document status after error', err as Error, { documentId: task.documentId }))
 
     if (jobId) {
       try {
         const duration = Math.max(Date.now() - processingStart, 0)
         await markJobFailed(jobId, error, duration)
       } catch (jobError) {
-        console.error(`Failed to mark job ${jobId} as failed:`, jobError)
+        logger.error('Failed to mark job as failed', jobError as Error, { jobId })
       }
     }
 

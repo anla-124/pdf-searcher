@@ -71,7 +71,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
         alert(`Failed to create comparison: ${data.error || 'Unknown error'}`)
       }
     } catch (error) {
-      console.error('Draftable comparison error:', error)
+      console.error('[SelectedSearchInterface] Draftable comparison error:', error instanceof Error ? error.message : 'Unknown error', { sourceDocId: sourceDocument.id, targetDocId })
       alert('Failed to create comparison. Please try again.')
     } finally {
       setComparingDocs(prev => {
@@ -114,7 +114,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
         const data = await response.json()
         setResults(data)
       } catch (error) {
-        console.error('Auto-search failed:', error)
+        console.error('[SelectedSearchInterface] Auto-search failed:', error instanceof Error ? error.message : 'Unknown error')
       } finally {
         setIsComparing(false)
       }
@@ -223,7 +223,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
       window.document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
     } catch (error) {
-      console.error('Error downloading document:', error)
+      console.error('[SelectedSearchInterface] Error downloading document:', error instanceof Error ? error.message : 'Unknown error', { documentId: document.id, filename: document.filename })
       alert('Failed to download document. Please try again.')
     }
   }
@@ -239,7 +239,7 @@ export function SelectedSearchInterface({ sourceDocument, autoSearchTargets }: S
       window.open(url, '_blank')
       setTimeout(() => window.URL.revokeObjectURL(url), 1000)
     } catch (error) {
-      console.error('Error viewing document:', error)
+      console.error('[SelectedSearchInterface] Error viewing document:', error instanceof Error ? error.message : 'Unknown error', { documentId: document.id, filename: document.filename })
       alert('Failed to open document. Please try again.')
     }
   }

@@ -153,12 +153,11 @@ export function DocumentUpload({ onUploadComplete }: DocumentUploadProps) {
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Validation failed')
       // Mark all new files as error if validation fails
-      setFiles(prev => prev.map(f => 
+      setFiles(prev => prev.map(f =>
         newFiles.some(nf => nf.id === f.id)
           ? { ...f, status: 'error' as const, error: 'Validation failed' }
           : f
       ))
-    } finally {
     }
   }, [validateFiles, getValidationSummary])
 

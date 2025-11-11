@@ -1,4 +1,5 @@
 // Document AI processor configuration
+import { logger } from '@/lib/logger'
 
 export const PROCESSOR_TYPES = {
   FORM_PARSER: 'form_parser',
@@ -35,6 +36,6 @@ export function getProcessorName(processorId: string): string {
 // - Same prefix issues as OCR
 // - Splits Yes/No into separate paragraphs instead of grouping
 export function detectOptimalProcessor(filename: string, fileSize: number): ProcessorType {
-  console.warn(`Using OCR processor for document: ${filename} (${fileSize} bytes)`)
+  logger.info('Using OCR processor for document', { filename, fileSize })
   return PROCESSOR_TYPES.DOCUMENT_OCR
 }

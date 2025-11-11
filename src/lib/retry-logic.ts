@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger'
+
 type RetryableError = {
   code?: number | string
   status?: number
@@ -100,17 +102,17 @@ export class SmartRetry {
 
   // Helper methods for enterprise service configurations
   static async executeWithVertexAI<T>(operation: () => Promise<T>): Promise<RetryResult<T>> {
-    console.warn('🤖 Using enterprise Vertex AI retry configuration')
+    logger.info('Using enterprise Vertex AI retry configuration')
     return this.execute(operation, this.enterpriseConfigs.vertexAI)
   }
 
   static async executeWithPinecone<T>(operation: () => Promise<T>): Promise<RetryResult<T>> {
-    console.warn('📌 Using enterprise Pinecone retry configuration')
+    logger.info('Using enterprise Pinecone retry configuration')
     return this.execute(operation, this.enterpriseConfigs.pinecone)
   }
 
   static async executeWithDocumentAI<T>(operation: () => Promise<T>): Promise<RetryResult<T>> {
-    console.warn('📄 Using enterprise Document AI retry configuration')
+    logger.info('Using enterprise Document AI retry configuration')
     return this.execute(operation, this.enterpriseConfigs.documentAI)
   }
 
@@ -139,23 +141,23 @@ export class SmartRetry {
         const retryCandidate = toRetryableError(error)
 
         if (!config.retryableErrors(retryCandidate)) {
-          console.error(`❌ Non-retryable error on attempt ${attempt}:`, lastError.message)
+          logger.error('Non-retryable error encountered', lastError, { attempt })
           break
         }
-        
+
         // Don't retry on last attempt
         if (attempt === config.maxAttempts) {
-          console.error(`❌ Max attempts (${config.maxAttempts}) reached`)
+          logger.error('Max retry attempts reached', lastError, { maxAttempts: config.maxAttempts })
           break
         }
-        
+
         // Calculate delay with exponential backoff
         const delay = Math.min(
           config.baseDelay * Math.pow(config.backoffFactor, attempt - 1),
           config.maxDelay
         )
-        
-        console.warn(`🔄 Retry attempt ${attempt}/${config.maxAttempts} in ${delay}ms. Error:`, lastError.message)
+
+        logger.warn('Retrying operation', { attempt, maxAttempts: config.maxAttempts, delayMs: delay, errorMessage: lastError.message })
         
         // Call retry callback if provided
         config.onRetry?.(attempt, retryCandidate)
@@ -194,7 +196,7 @@ export const RetryConfigs = {
       return false
     },
     onRetry: (attempt: number, error: RetryableError) => {
-      console.warn(`🔄 Document AI retry ${attempt}: ${error.message}`)
+      logger.warn('Document AI retry', { attempt, errorMessage: error.message })
     }
   },
 
@@ -215,7 +217,7 @@ export const RetryConfigs = {
       return false
     },
     onRetry: (attempt: number, error: RetryableError) => {
-      console.warn(`🔄 Vertex AI embeddings retry ${attempt}: ${error.message}`)
+      logger.warn('Vertex AI embeddings retry', { attempt, errorMessage: error.message })
     }
   },
 
@@ -235,7 +237,7 @@ export const RetryConfigs = {
       return false
     },
     onRetry: (attempt: number, error: RetryableError) => {
-      console.warn(`🔄 Pinecone indexing retry ${attempt}: ${error.message}`)
+      logger.warn('Pinecone indexing retry', { attempt, errorMessage: error.message })
     }
   },
 
@@ -255,7 +257,7 @@ export const RetryConfigs = {
       return false
     },
     onRetry: (attempt: number, error: RetryableError) => {
-      console.warn(`🔄 Supabase operation retry ${attempt}: ${error.message}`)
+      logger.warn('Supabase operation retry', { attempt, errorMessage: error.message })
     }
   },
 
@@ -275,7 +277,7 @@ export const RetryConfigs = {
       return false
     },
     onRetry: (attempt: number, error: RetryableError) => {
-      console.warn(`🔄 File upload retry ${attempt}: ${error.message}`)
+      logger.warn('File upload retry', { attempt, errorMessage: error.message })
     }
   }
 }
@@ -295,35 +297,35 @@ export class CircuitBreaker {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailTime > this.timeoutMs) {
         this.state = 'half-open'
-        console.warn('🔄 Circuit breaker half-open, testing...')
+        logger.warn('Circuit breaker half-open, testing service', { state: 'half-open' })
       } else {
         throw new Error('Circuit breaker is open - operation blocked')
       }
     }
-    
+
     try {
       const result = await operation()
-      
+
       if (this.state === 'half-open') {
         this.state = 'closed'
         this.failures = 0
-        console.warn('✅ Circuit breaker closed - service recovered')
+        logger.info('Circuit breaker closed - service recovered', { state: 'closed' })
       }
-      
+
       return result
     } catch (error) {
       this.failures++
       this.lastFailTime = Date.now()
-      
+
       if (this.failures >= this.maxFailures) {
         this.state = 'open'
-        console.warn(`🚨 Circuit breaker opened after ${this.failures} failures`)
+        logger.warn('Circuit breaker opened due to failures', { state: 'open', failures: this.failures })
       }
-      
+
       throw error
     }
   }
-  
+
   getState() {
     return {
       state: this.state,
@@ -331,12 +333,12 @@ export class CircuitBreaker {
       lastFailTime: this.lastFailTime
     }
   }
-  
+
   reset() {
     this.state = 'closed'
     this.failures = 0
     this.lastFailTime = 0
-    console.warn('🔄 Circuit breaker manually reset')
+    logger.info('Circuit breaker manually reset', { state: 'closed' })
   }
 }
 

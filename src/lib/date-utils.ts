@@ -27,7 +27,7 @@ export function formatUploadDate(dateString: string): string {
     
     return format(displayDate, 'dd MMM yyyy - h:mm a')
   } catch (error) {
-    console.error('Error formatting date:', error, 'for date:', dateString)
+    console.error('[date-utils] Error formatting date:', error instanceof Error ? error.message : 'Unknown error', { dateString })
     return 'Invalid date'
   }
 }
@@ -40,7 +40,7 @@ export function formatUploadDateUTC(dateString: string): string {
     const date = parseISO(dateString)
     return format(date, 'dd MMM yyyy - h:mm a') + ' UTC'
   } catch (error) {
-    console.error('Error formatting UTC date:', error, 'for date:', dateString)
+    console.error('[date-utils] Error formatting UTC date:', error instanceof Error ? error.message : 'Unknown error', { dateString })
     return 'Invalid date'
   }
 }
@@ -53,14 +53,14 @@ export function formatUploadDateAlt(dateString: string): string {
   try {
     // Try creating Date object directly
     const date = new Date(dateString)
-    
+
     if (isNaN(date.getTime())) {
       throw new Error('Invalid date')
     }
-    
+
     return format(date, 'dd MMM yyyy - h:mm a')
   } catch (error) {
-    console.error('Error formatting date (alt):', error, 'for date:', dateString)
+    console.error('[date-utils] Error formatting date (alt):', error instanceof Error ? error.message : 'Unknown error', { dateString })
     return 'Invalid date'
   }
 }
@@ -73,7 +73,7 @@ export function formatUploadDateExplicit(dateString: string): string {
   try {
     // Explicitly handle UTC conversion
     let utcDate: Date
-    
+
     if (dateString.includes('+00') || dateString.endsWith('Z')) {
       // This is already UTC, parse normally
       utcDate = new Date(dateString)
@@ -81,21 +81,24 @@ export function formatUploadDateExplicit(dateString: string): string {
       // Assume UTC if no timezone specified
       utcDate = new Date(dateString + (dateString.includes('T') ? 'Z' : ' UTC'))
     }
-    
+
     if (isNaN(utcDate.getTime())) {
       throw new Error('Invalid date')
     }
-    
-    console.warn('🕐 Explicit conversion:', {
-      input: dateString,
-      utcDate: utcDate.toISOString(),
-      localDate: utcDate.toString(),
-      formatted: format(utcDate, 'dd MMM yyyy - h:mm a')
-    })
-    
+
+    // Debug logging for explicit date conversion (development only)
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[date-utils] Explicit date conversion:', {
+        input: dateString,
+        utcDate: utcDate.toISOString(),
+        localDate: utcDate.toString(),
+        formatted: format(utcDate, 'dd MMM yyyy - h:mm a')
+      })
+    }
+
     return format(utcDate, 'dd MMM yyyy - h:mm a')
   } catch (error) {
-    console.error('Error formatting date (explicit):', error, 'for date:', dateString)
+    console.error('[date-utils] Error formatting date (explicit):', error instanceof Error ? error.message : 'Unknown error', { dateString })
     return 'Invalid date'
   }
 }

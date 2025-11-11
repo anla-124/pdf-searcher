@@ -15,10 +15,3 @@ if (!accountId || !authToken) {
 
 // Initialize Draftable client with custom self-hosted URL
 export const draftableClient = client(accountId, authToken, apiUrl)
-
-/**
- * Helper to check if Draftable is configured
- */
-export function isDraftableConfigured(): boolean {
-  return !!(accountId && authToken)
-}

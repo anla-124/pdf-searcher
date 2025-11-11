@@ -33,14 +33,24 @@ A web application for processing PDF documents and performing similarity searche
     ```bash
     npm install
     ```
-3.  Set up your environment variables by copying the example file:
+3.  Set up your environment variables by copying the appropriate template:
+
+    **For Local Development (with local Supabase, bypasses VPN issues):**
     ```bash
-    # For Supabase/Pinecone free plans
+    cp .env.dev.template .env.local
+    # Start local Supabase: npx supabase start
+    # Copy credentials from terminal output to .env.local
+    ```
+
+    **For Production Deployment (with managed Supabase):**
+    ```bash
+    # For free tier plans
     cp .env.free.template .env.local
 
-    # For paid tiers
-    # cp .env.paid.template .env.local
+    # For paid tier plans (higher performance limits)
+    cp .env.paid.template .env.local
     ```
+
 4.  Fill in the required environment variables in `.env.local`.
 5.  When uploading documents, populate the metadata card for each file (law firm, fund manager, fund admin, jurisdiction).  
     - Use the **Subscription Agreement Pages to Skip** inputs if you need to exclude a page range (e.g., 12–24).  
@@ -57,14 +67,44 @@ A web application for processing PDF documents and performing similarity searche
 6. **Processing jobs:** each document queues a processing job unless the pipeline can start immediately (tiny documents on paid tiers). The cron endpoint is auto-triggered so background processing begins right away.  
 7. **Status monitoring:** watch the dashboard, activity logs, or `GET /api/health/pool` for progress (connection pool usage, throttling limits, Pinecone cleanup queue depth). Failed uploads remain in the list with error messages; retry after addressing the issue.
 
-### Environment Profiles
+### Environment Configuration
 
-Two environment templates ship with the project:
+Three environment templates are provided for different deployment scenarios:
 
-- `.env.free.template`: tuned for the Supabase and Pinecone free tiers with conservative connection-pool and throttling limits.
-- `.env.paid.template`: starting point for paid tiers—raise the limits further once you confirm the service quotas.
+#### Local Development Template (`.env.dev.template`)
+- **Use case:** Local development with Docker Supabase (bypasses VPN authentication issues)
+- **Supabase:** Local instance at `http://127.0.0.1:54321`
+- **Setup:**
+  ```bash
+  cp .env.dev.template .env.local
+  npx supabase start  # Copy credentials from output
+  npm run dev
+  ```
+- **Features:**
+  - `NODE_TLS_REJECT_UNAUTHORIZED=0` for corporate VPN environments
+  - Conservative limits for local testing (2 concurrent operations, 40 pool connections)
+  - All other services (Google Cloud, Pinecone, Draftable) use managed instances
 
-Copy the template that matches your target environment to `.env.local`, then populate the credential placeholders.
+#### Free Tier Template (`.env.free.template`)
+- **Use case:** Production deployment with free-tier managed services
+- **Supabase:** Managed cloud instance
+- **Configuration:**
+  - Conservative connection pool (2-40 connections)
+  - Limited concurrency (2 concurrent uploads/deletes)
+  - Single document processing (`MAX_CONCURRENT_DOCUMENTS=1`)
+  - Suitable for Supabase and Pinecone free plans
+
+#### Paid Tier Template (`.env.paid.template`)
+- **Use case:** Production deployment with paid-tier services for higher performance
+- **Supabase:** Managed cloud instance
+- **Configuration:**
+  - Larger connection pool (20-200 connections)
+  - Higher concurrency (5 concurrent operations)
+  - Parallel document processing (`MAX_CONCURRENT_DOCUMENTS=10`)
+  - Enhanced similarity workers (`SIMILARITY_STAGE2_WORKERS=8`)
+  - Adjust limits further based on your service quotas
+
+All templates include comprehensive inline documentation and consistent structure for easy maintenance.
 
 ## Operational Guardrails
 

@@ -78,7 +78,7 @@ export async function saveDocumentAIResponse(
     // Write to file with pretty formatting
     await fs.writeFile(outputPath, JSON.stringify(debugData, null, 2), 'utf-8')
 
-    // Log to console
+    // Log structured data
     logger.info('Document AI raw output saved for analysis', {
       documentId,
       outputPath,
@@ -86,22 +86,28 @@ export async function saveDocumentAIResponse(
       component: 'debug-document-ai'
     })
 
-    /* eslint-disable no-console */
-    console.log(`\n${'='.repeat(80)}`)
-    console.log(`📝 Document AI Response Saved for Analysis`)
-    console.log(`${'='.repeat(80)}`)
-    console.log(`File: ${outputPath}`)
-    console.log(`\nQuick Stats:`)
-    console.log(`  - Pages: ${stats.totalPages}`)
-    console.log(`  - Text Length: ${stats.totalText} characters`)
-    console.log(`  - Entities: ${stats.entityCount}`)
-    console.log(`  - Tables: ${stats.tableCount}`)
-    console.log(`  - Blocks: ${stats.blockCount}`)
-    console.log(`  - Paragraphs: ${stats.paragraphCount}`)
-    console.log(`  - Form Fields: ${stats.formFieldCount}`)
-    console.log(`  - Document Layout Blocks: ${stats.documentLayoutBlockCount}`)
-    console.log(`${'='.repeat(80)}\n`)
-    /* eslint-enable no-console */
+    // Log formatted output for terminal display
+    const formattedOutput = [
+      '',
+      '='.repeat(80),
+      '📝 Document AI Response Saved for Analysis',
+      '='.repeat(80),
+      `File: ${outputPath}`,
+      '',
+      'Quick Stats:',
+      `  - Pages: ${stats.totalPages}`,
+      `  - Text Length: ${stats.totalText} characters`,
+      `  - Entities: ${stats.entityCount}`,
+      `  - Tables: ${stats.tableCount}`,
+      `  - Blocks: ${stats.blockCount}`,
+      `  - Paragraphs: ${stats.paragraphCount}`,
+      `  - Form Fields: ${stats.formFieldCount}`,
+      `  - Document Layout Blocks: ${stats.documentLayoutBlockCount}`,
+      '='.repeat(80),
+      ''
+    ].join('\n')
+
+    logger.info(formattedOutput)
 
     return outputPath
   } catch (error) {

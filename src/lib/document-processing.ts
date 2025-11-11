@@ -1288,9 +1288,6 @@ async function saveProcessedDocumentData(
     throw new Error('Failed to store extracted text in document_content')
   }
 
-  // Note: extracted_fields table removed - OCR processor doesn't extract form fields
-  // Only Form Parser processor would populate formFields, but app always uses OCR (document-ai-config.ts:39)
-
   const embeddingStats = await generateEmbeddingsWithUnlimitedRetries(
     documentId,
     documentAIResponse || null,
