@@ -500,9 +500,6 @@ const isMetadataComplete = (metadata: DocumentMetadata) => {
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
             Drop PDF files here or click to browse
           </p>
-          <p className="text-xs text-gray-500">
-            Maximum 10 files, up to 50MB each
-          </p>
           <Input
             id="file-upload"
             type="file"
