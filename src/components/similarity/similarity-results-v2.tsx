@@ -236,7 +236,6 @@ export function SimilarityResultsV2({ results, sourceDocument, isLoading, maxRes
           <div className="animate-pulse flex flex-col items-center">
             <Sparkles className="h-12 w-12 text-blue-500 mb-4 animate-spin" />
             <p className="text-gray-600 dark:text-gray-400">Searching for similar documents...</p>
-            <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">Running 3-stage similarity pipeline...</p>
           </div>
         </CardContent>
       </Card>

@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from 'react'
 import { Document, SearchFilters } from '@/types'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -152,9 +152,6 @@ export function SimilaritySearchForm({ documentId, sourceDocument }: SimilarityS
                 <Search className="h-5 w-5" />
                 Similarity Search
               </CardTitle>
-              <CardDescription>
-                Search documents similar to &quot;{sourceDocument.title}&quot;
-              </CardDescription>
             </div>
             <Button
               variant="outline"

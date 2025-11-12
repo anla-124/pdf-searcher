@@ -1103,12 +1103,6 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
               </Button>
             </>
           )}
-          {!isSelectMode && (
-            <Button size="sm" variant="outline">
-              <Download className="h-4 w-4 mr-2" />
-              Export List
-            </Button>
-          )}
         </div>
       </div>
 
@@ -1200,12 +1194,8 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
         {/* Metadata Filters */}
         {showFilters && (
           <div className="border rounded-lg p-4 space-y-3 bg-gray-50 dark:bg-slate-800/60 filter-panel-enhanced">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-gray-500" />
-                <span className="text-sm font-medium">Filter Documents</span>
-              </div>
-              {hasActiveFilters() && (
+            {hasActiveFilters() && (
+              <div className="flex items-center justify-end mb-3">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1215,8 +1205,8 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
                   <FilterX className="h-3 w-3 mr-1" />
                   Clear All
                 </Button>
-              )}
-            </div>
+              </div>
+            )}
             
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {/* Law Firm Filter */}
@@ -1299,13 +1289,8 @@ export function EnhancedDocumentList({ refreshTrigger = 0 }: DocumentListProps) 
               <CardContent className="flex flex-col items-center justify-center p-12">
                 <FileText className="h-12 w-12 text-gray-400 mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-                  {searchQuery || hasActiveFilters() ? 'No matching documents' : 'No documents yet'}
+                  No documents to show
                 </h3>
-                <p className="text-gray-600 dark:text-gray-400 text-center">
-                  {searchQuery || hasActiveFilters()
-                    ? 'Try adjusting your search or filter criteria.'
-                    : 'Upload your first document to get started.'}
-                </p>
               </CardContent>
             </Card>
           ) : (
